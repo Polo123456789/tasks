@@ -73,7 +73,7 @@ func (r Recurrence) Next(after Date) (Date, error) {
 		}
 	case MonthlyDay:
 		for n := 1; n <= 24; n++ {
-			base := DateFromTime(time.Date(after.year, after.month+n, 1, 0, 0, 0, 0, time.UTC))
+			base := DateFromTime(time.Date(after.year, after.month+time.Month(n), 1, 0, 0, 0, 0, time.UTC))
 			day := r.Day
 			if day > base.DaysInMonth() {
 				continue
@@ -88,7 +88,7 @@ func (r Recurrence) Next(after Date) (Date, error) {
 		return NewDate(base.year, base.month, base.DaysInMonth())
 	case MonthlyWeekday:
 		for n := 1; n <= 24; n++ {
-			base := DateFromTime(time.Date(after.year, after.month+n, 1, 0, 0, 0, 0, time.UTC))
+			base := DateFromTime(time.Date(after.year, after.month+time.Month(n), 1, 0, 0, 0, 0, time.UTC))
 			d := ordinalWeekday(base.year, base.month, r.Ordinal, r.Weekday)
 			if d.After(after) {
 				return d, nil

@@ -1,0 +1,13 @@
+BEGIN;
+CREATE TABLE statuses(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK(kind IN ('normal','cancelled','done')), position INTEGER NOT NULL, is_initial INTEGER NOT NULL DEFAULT 0 CHECK(is_initial IN(0,1)));
+CREATE UNIQUE INDEX one_initial_status ON statuses(is_initial) WHERE is_initial=1;
+INSERT INTO statuses(name,kind,position,is_initial) VALUES ('Pendiente','normal',1,1),('En progreso','normal',2,0),('Bloqueada','normal',3,0),('Cancelada','cancelled',4,0),('Finalizada','done',5,0);
+CREATE TABLE tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL CHECK(length(trim(title))>0), status_id INTEGER NOT NULL REFERENCES statuses(id), priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 4), markdown TEXT NOT NULL DEFAULT '', start_date TEXT, due_date TEXT, recurrence TEXT, recurrence_anchor TEXT, version INTEGER NOT NULL DEFAULT 1, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK(start_date IS NULL OR due_date IS NULL OR due_date>=start_date), CHECK(recurrence IS NULL OR (start_date IS NULL AND due_date IS NULL)));
+CREATE TABLE subtasks(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, title TEXT NOT NULL CHECK(length(trim(title))>0), status_id INTEGER NOT NULL REFERENCES statuses(id));
+CREATE TABLE dependencies(task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, PRIMARY KEY(task_id,depends_on_id), CHECK(task_id<>depends_on_id));
+CREATE TABLE history(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+CREATE INDEX tasks_status ON tasks(status_id,deleted_at);
+CREATE INDEX dependencies_target ON dependencies(depends_on_id);
+CREATE INDEX history_task ON history(task_id,id);
+PRAGMA user_version=1;
+COMMIT;
