@@ -350,8 +350,11 @@ func (s *Store) SetTaskStatus(ctx context.Context, id, statusID, version int64) 
 		return domain.Task{}, e
 	}
 	defer tx.Rollback()
-	var kind string
+	var kind, oldKind string
 	if e = tx.QueryRowContext(ctx, "SELECT kind FROM statuses WHERE id=?", statusID).Scan(&kind); e != nil {
+		return domain.Task{}, domain.ErrNotFound
+	}
+	if e = tx.QueryRowContext(ctx, "SELECT s.kind FROM tasks t JOIN statuses s ON s.id=t.status_id WHERE t.id=?", id).Scan(&oldKind); e != nil {
 		return domain.Task{}, domain.ErrNotFound
 	}
 	r, e := tx.ExecContext(ctx, "UPDATE tasks SET status_id=?,version=version+1,updated_at=? WHERE id=? AND version=?", statusID, time.Now().UTC().Format(time.RFC3339Nano), id, version)
@@ -367,9 +370,11 @@ func (s *Store) SetTaskStatus(ctx context.Context, id, statusID, version int64) 
 		if e != nil {
 			return domain.Task{}, e
 		}
-	} else {
-		var oldKind string
-		_ = tx.QueryRowContext(ctx, "SELECT s.kind FROM tasks t JOIN statuses s ON s.id=t.status_id WHERE t.id=?", id).Scan(&oldKind)
+	} else if oldKind == "done" || oldKind == "cancelled" {
+		_, e = tx.ExecContext(ctx, "UPDATE subtasks SET status_id=(SELECT id FROM statuses WHERE is_initial=1) WHERE task_id=?", id)
+		if e != nil {
+			return domain.Task{}, e
+		}
 	}
 	_, e = tx.ExecContext(ctx, "INSERT INTO history(task_id,kind,detail) VALUES(?,'status_changed',?)", id, kind)
 	if e != nil {
