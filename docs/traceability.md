@@ -1,6 +1,6 @@
 # Matriz de trazabilidad del release
 
-Esta matriz enlaza cada sección de `SPEC.md` con evidencia ejecutable o inspeccionable. Los comandos de validación se ejecutan en Linux y macOS mediante `.github/workflows/ci.yml`.
+Esta matriz enlaza cada sección de `SPEC.md` con evidencia ejecutable o inspeccionable. Los comandos de validación pueden ejecutarse localmente antes de un release.
 
 | Spec | Implementación principal | Evidencia automática |
 |---|---|---|
@@ -24,7 +24,7 @@ Esta matriz enlaza cada sección de `SPEC.md` con evidencia ejecutable o inspecc
 | 15. Vistas | Kanban, Tabla, Calendario y Gantt independientes | tests de cada presentador/vista, Unicode, terminal pequeña y E2E resize |
 | 16. Búsqueda/filtros/orden | `TaskFilter`, SQL y controles TUI compartidos | filtros combinados, estado global por nombre y tests de interacción |
 | 17. Historial | tabla append-only y eventos en las mismas transacciones | rollback conjunto, tipos de evento e historial TUI |
-| 18. Requisitos técnicos | arquitectura por capas, migraciones v1→v2, locks/versiones | futuro/corrupto, dos conexiones, race, vet, build sin CGO, CI Linux/macOS |
+| 18. Requisitos técnicos | arquitectura por capas, migraciones v1→v2, locks/versiones | futuro/corrupto, dos conexiones, race, vet y build sin CGO |
 | 19. Fuera de alcance | no existen red, etiquetas, adjuntos, horas, cron ni relaciones entre proyectos | revisión de dependencias y pruebas de rechazo de cron/ciclos entre IDs locales |
 
 ## Claridad de interacción
