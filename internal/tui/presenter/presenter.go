@@ -7,10 +7,10 @@ import (
 )
 
 type Task struct {
-	ID                                      int64
-	Project, Title, Status, Priority, Dates string
-	Blocked, Recurring                      bool
-	Version                                 int64
+	ID                                              int64
+	Source, Project, Title, Status, Priority, Dates string
+	Blocked, Recurring                              bool
+	Version                                         int64
 }
 
 func Tasks(in []domain.Task) []Task {
@@ -30,7 +30,7 @@ func Tasks(in []domain.Task) []Task {
 		if v.Project != "" {
 			project = filepath.Base(v.Project)
 		}
-		out = append(out, Task{v.ID, project, v.Title, v.Status.Name, v.Priority.String(), dates, v.Blocked, v.Recurrence != nil, v.Version})
+		out = append(out, Task{v.ID, v.Project, project, v.Title, v.Status.Name, v.Priority.String(), dates, v.Blocked, v.Recurrence != nil, v.Version})
 	}
 	return out
 }

@@ -129,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected < len(m.tasks) {
 				t := m.tasks[m.selected]
 				return m, func() tea.Msg {
-					_, e := m.backend.Trash(context.Background(), t.Project, t.ID, t.Version)
+					_, e := m.backend.Trash(context.Background(), t.Source, t.ID, t.Version)
 					return loaded{err: e, tasks: nil, trash: false}
 				}
 			}

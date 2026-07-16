@@ -81,10 +81,10 @@ func run() error {
 		if e = filesystem.ValidateProjectName(name); e != nil {
 			return e
 		}
-		if existing, e := filesystem.Discover(cwd); e != nil {
+		if existing, e := filesystem.InDirectory(cwd); e != nil {
 			return e
-		} else if existing != "" {
-			return fmt.Errorf("directory tree already contains project %s", existing)
+		} else if len(existing) != 0 {
+			return fmt.Errorf("directory already contains project %s", existing[0])
 		}
 		project = filepath.Join(cwd, name)
 		if _, e = os.Lstat(project); !errors.Is(e, os.ErrNotExist) {

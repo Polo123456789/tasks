@@ -16,6 +16,21 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	return fmt.Sprintf("multiple .tasks files in %s: %s", e.Directory, strings.Join(e.Files, ", "))
 }
+func InDirectory(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	for _, v := range entries {
+		if !v.IsDir() && strings.EqualFold(filepath.Ext(v.Name()), ".tasks") {
+			found = append(found, filepath.Join(dir, v.Name()))
+		}
+	}
+	sort.Strings(found)
+	return found, nil
+}
+
 func Discover(start string) (string, error) {
 	dir, e := filepath.Abs(start)
 	if e != nil {
@@ -25,17 +40,10 @@ func Discover(start string) (string, error) {
 		dir = filepath.Dir(dir)
 	}
 	for {
-		entries, e := os.ReadDir(dir)
+		found, e := InDirectory(dir)
 		if e != nil {
 			return "", e
 		}
-		var found []string
-		for _, v := range entries {
-			if !v.IsDir() && strings.EqualFold(filepath.Ext(v.Name()), ".tasks") {
-				found = append(found, filepath.Join(dir, v.Name()))
-			}
-		}
-		sort.Strings(found)
 		if len(found) > 1 {
 			return "", &ConflictError{dir, found}
 		}
