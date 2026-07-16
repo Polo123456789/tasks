@@ -40,9 +40,24 @@ La ruta también se mostrará cuando sea necesario distinguir proyectos con el m
 
 La ayuda global se muestra con `tasks help`, `tasks -h` o `tasks --help`. Las tres formas imprimen el mismo contenido en stdout, no inicializan configuración ni proyectos y terminan correctamente.
 
-`tasks` sin argumentos conserva el arranque de la TUI. Cualquier comando u opción no reconocidos, incluso después de un comando válido, terminan con error y sugieren ejecutar `tasks help`; nunca continúan hacia la detección de modo. El único argumento que comienza con guion permitido fuera de la ayuda global es `-` como origen stdin de `tasks import`.
+`tasks` sin argumentos conserva el arranque de la TUI. Cualquier comando u opción no reconocidos, incluso después de un comando válido, terminan con error y sugieren ejecutar `tasks help`; nunca continúan hacia la detección de modo. Los argumentos que comienzan con guion admitidos fuera de la ayuda global son `-` como origen stdin de `tasks import` y las opciones de color de `tasks summary`.
 
-La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `import` y `help`. No existe ayuda específica por subcomando en esta versión. Los comandos conocidos con una cantidad incorrecta de argumentos muestran su sintaxis y la misma sugerencia de ayuda.
+La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `import`, `summary` y `help`. No existe ayuda específica por subcomando en esta versión. Los comandos conocidos con una cantidad incorrecta de argumentos muestran su sintaxis y la misma sugerencia de ayuda.
+
+### 2.4 Resumen no interactivo
+
+`tasks summary [--color=auto|always|never]` genera una salida compacta para banners de inicio de shell:
+
+- Usa modo local dentro de un proyecto y agrega proyectos registrados en modo global.
+- Excluye tareas finalizadas, canceladas, eliminadas y pendientes sin fecha.
+- Separa, sin duplicar, tareas atrasadas, tareas correspondientes a hoy y otras tareas en estados activos.
+- Considera atrasada una tarea cuyo vencimiento es anterior a hoy.
+- Considera para hoy un intervalo ya iniciado y aún vigente, un vencimiento de hoy o un ciclo recurrente pendiente.
+- Considera activo cualquier estado normal distinto del estado inicial.
+- Prioriza vencimientos más antiguos y luego prioridades más altas.
+- Nunca ocupa más de 20 filas y trunca líneas al ancho disponible.
+- El color es automático para terminales, respeta `NO_COLOR` y puede forzarse o desactivarse. `--no-color` equivale a `--color=never`.
+- En global, una falla parcial se muestra como advertencia sin ocultar los proyectos disponibles.
 
 ## 3. Creación de proyectos
 

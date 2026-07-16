@@ -297,6 +297,7 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		}
 	}
 	var projects []application.Project
+	summaryPartial := false
 	mode := domain.ModeLocal
 	if project != "" {
 		store, e := db.Open(project)
@@ -309,19 +310,31 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		projects = []application.Project{{Path: project, Name: application.ProjectName(project), Store: store}}
 	} else {
 		mode = domain.ModeGlobal
-		paths, e := reg.Prune(context.Background())
-		if e != nil {
-			return e
+		paths, pruneErr := reg.Prune(context.Background())
+		if pruneErr != nil {
+			if invocation.kind != commandSummary {
+				return pruneErr
+			}
+			summaryPartial = true
+			slog.Warn("registry prune", "error", pruneErr)
 		}
 		for _, p := range paths {
-			store, e := db.Open(p)
-			projects = append(projects, application.Project{Path: p, Name: application.ProjectName(p), Store: store, Err: e})
+			store, openErr := db.Open(p)
+			opened := application.Project{Path: p, Name: application.ProjectName(p), Err: openErr}
+			if openErr == nil {
+				opened.Store = store
+			}
+			projects = append(projects, opened)
 		}
 	}
 	svc := &application.Service{Mode: mode, Projects: projects, Clock: clock.System{}}
 	defer func() { resultErr = errors.Join(resultErr, svc.Close()) }()
-	if e = svc.Maintain(context.Background()); e != nil {
-		slog.Warn("maintenance", "error", e)
+	maintenanceErr := svc.Maintain(context.Background())
+	if maintenanceErr != nil {
+		slog.Warn("maintenance", "error", maintenanceErr)
+	}
+	if invocation.kind == commandSummary {
+		return writeSummary(context.Background(), stdout, svc, systemClock.Today(), invocation.color, summaryPartial || maintenanceErr != nil)
 	}
 	model := tui.New(backend{svc: svc, path: project})
 	_, e = tea.NewProgram(model, tea.WithAltScreen()).Run()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Polo123456789/tasks/internal/adapters/editor"
+	registrydb "github.com/Polo123456789/tasks/internal/adapters/registry"
 	db "github.com/Polo123456789/tasks/internal/adapters/sqlite"
 	"github.com/Polo123456789/tasks/internal/application"
 	"github.com/Polo123456789/tasks/internal/domain"
@@ -155,6 +156,112 @@ func TestAIPromptWritesStandaloneInstructions(t *testing.T) {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("prompt missing %q", expected)
 		}
+	}
+}
+
+func TestSummaryCommandRendersLocalProjectWithoutOpeningTUI(t *testing.T) {
+	directory := t.TempDir()
+	projectPath := filepath.Join(directory, "project.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := domain.DateFromTime(time.Now())
+	if _, err = store.CreateTask(context.Background(), domain.Task{Title: "Preparar despliegue", Due: &today, Priority: domain.PriorityHigh}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	var output bytes.Buffer
+	if err = runArgs([]string{"summary", "--color=always"}, strings.NewReader(""), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "\x1b[") {
+		t.Fatalf("forced colors missing: %q", output.String())
+	}
+	plain := summaryANSI.ReplaceAllString(output.String(), "")
+	for _, expected := range []string{"tasks ·", "PARA HOY · 1", "Preparar despliegue", "alta", "vence hoy"} {
+		if !strings.Contains(plain, expected) {
+			t.Fatalf("summary missing %q:\n%s", expected, plain)
+		}
+	}
+	if strings.Contains(plain, "[project]") || len(strings.Split(strings.TrimSuffix(plain, "\n"), "\n")) > summaryMaxLines {
+		t.Fatalf("local summary context or height is wrong:\n%s", plain)
+	}
+}
+
+func TestSummaryCommandUsesRegisteredProjectsInGlobalMode(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "projects", "alpha.tasks")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := store.Statuses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CreateTask(context.Background(), domain.Task{Title: "Revisar métricas", StatusID: statuses[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "config")
+	registry, err := registrydb.Open(filepath.Join(config, "tasks", "registry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = registry.Register(context.Background(), projectPath); err != nil {
+		t.Fatal(err)
+	}
+	brokenPath := filepath.Join(root, "projects", "broken.tasks")
+	if err = os.WriteFile(brokenPath, []byte("not sqlite"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = registry.Register(context.Background(), brokenPath); err != nil {
+		t.Fatal(err)
+	}
+	if err = registry.Close(); err != nil {
+		t.Fatal(err)
+	}
+	emptyDirectory := filepath.Join(root, "home")
+	if err = os.Mkdir(emptyDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(emptyDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	t.Setenv("XDG_CONFIG_HOME", config)
+	var output bytes.Buffer
+	if err = runArgs([]string{"summary", "--no-color"}, strings.NewReader(""), &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"ACTIVAS · 1", "[alpha] Revisar métricas", "En progreso", "Resumen parcial"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("global summary missing %q:\n%s", expected, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "\x1b[") {
+		t.Fatalf("--no-color emitted ANSI: %q", output.String())
 	}
 }
 

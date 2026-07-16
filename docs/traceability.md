@@ -7,6 +7,7 @@ Esta matriz enlaza cada sección de `SPEC.md` con evidencia ejecutable o inspecc
 | 1. Objetivo y archivo único | `cmd/tasks`, adaptador SQLite con journal `DELETE` | `TestClosedProjectIsSinglePortableFileWithoutSidecars`, E2E PTY |
 | 2. Detección de modo | `internal/adapters/filesystem`, bootstrap del comando | `discovery_test.go`: actual, padres, raíz, conflictos, espacios, Unicode y symlinks |
 | 2.3 Ayuda y despacho CLI | parser de invocación y ayuda global en `cmd/tasks` | alias equivalentes, rechazo de comandos/opciones, ausencia de efectos y E2E de códigos de salida |
+| 2.4 Resumen no interactivo | clasificador/renderizador compacto y bootstrap local/global en `cmd/tasks` | clasificación, deduplicación, color, ancho, límite de 20 filas e integración local/global |
 | 3. `tasks init` | `createProject`, esquema y registro | `TestCreateProjectIsExclusiveAndPortable`, E2E `init` |
 | 3.1 Importación asistida | contrato `projectimport`, importación SQLite y despacho CLI | decoder/normalización, rollback integral, publicación/registro, conservación tras fallo secundario y E2E `import` |
 | 4. Modo local | fachada de aplicación y vistas TUI | pruebas de modelo TUI y E2E |

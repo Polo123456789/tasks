@@ -13,12 +13,14 @@ const (
 	commandInit
 	commandAIPrompt
 	commandImport
+	commandSummary
 )
 
 type invocation struct {
 	kind    commandKind
 	project string
 	source  string
+	color   string
 }
 
 const helpText = `tasks — gestor local de tareas para terminal
@@ -28,6 +30,7 @@ Uso:
   tasks init nombre.tasks
   tasks ai-prompt
   tasks import nombre.tasks [resultado.json|-]
+  tasks summary [--color=auto|always|never]
   tasks help
   tasks -h
   tasks --help
@@ -37,10 +40,13 @@ Comandos:
   init               Crear un proyecto nuevo y abrirlo.
   ai-prompt          Imprimir el prompt para convertir una conversación a JSON.
   import             Crear un proyecto nuevo desde JSON en un archivo o stdin.
+  summary            Mostrar tareas atrasadas, para hoy y activas en hasta 20 líneas.
   help               Mostrar esta ayuda global.
 
 Opciones:
   -h, --help         Mostrar esta ayuda global.
+  --color=...        Color de summary: auto, always o never.
+  --no-color         Equivalente a --color=never.
 `
 
 func parseInvocation(args []string) (invocation, error) {
@@ -86,6 +92,24 @@ func parseInvocation(args []string) (invocation, error) {
 			invocation.source = args[2]
 		}
 		return invocation, nil
+	case "summary":
+		parsed := invocation{kind: commandSummary, color: "auto"}
+		for _, argument := range args[1:] {
+			switch argument {
+			case "--color=auto":
+				parsed.color = "auto"
+			case "--color=always":
+				parsed.color = "always"
+			case "--color=never", "--no-color":
+				parsed.color = "never"
+			default:
+				if strings.HasPrefix(argument, "-") {
+					return invocation{}, unknownOption(argument)
+				}
+				return invocation{}, usageError("tasks summary [--color=auto|always|never]")
+			}
+		}
+		return parsed, nil
 	default:
 		if strings.HasPrefix(args[0], "-") {
 			return invocation{}, unknownOption(args[0])

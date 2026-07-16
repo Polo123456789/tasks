@@ -24,7 +24,7 @@ func TestGlobalHelpAliasesMatchWithoutCreatingConfiguration(t *testing.T) {
 			t.Fatalf("%s output differs from global help", argument)
 		}
 	}
-	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "-h, --help"} {
+	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks summary", "--color=", "-h, --help"} {
 		if !strings.Contains(expected, text) {
 			t.Fatalf("help missing %q", text)
 		}
@@ -53,6 +53,8 @@ func TestParseInvocationRejectsUnknownCommandsOptionsAndBadArity(t *testing.T) {
 		{name: "prompt extra", args: []string{"ai-prompt", "extra"}, want: "uso: tasks ai-prompt"},
 		{name: "import missing", args: []string{"import"}, want: "uso: tasks import nombre.tasks"},
 		{name: "import extra", args: []string{"import", "project.tasks", "-", "extra"}, want: "uso: tasks import nombre.tasks"},
+		{name: "summary argument", args: []string{"summary", "extra"}, want: "uso: tasks summary"},
+		{name: "summary option", args: []string{"summary", "--color=sometimes"}, want: `opción desconocida "--color=sometimes"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -72,6 +74,19 @@ func TestParseInvocationPreservesTUIAndImportStdin(t *testing.T) {
 	invocation, err = parseInvocation([]string{"import", "project.tasks", "-"})
 	if err != nil || invocation.kind != commandImport || invocation.project != "project.tasks" || invocation.source != "-" {
 		t.Fatalf("import invocation=%#v err=%v", invocation, err)
+	}
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"summary"}, want: "auto"},
+		{args: []string{"summary", "--color=always"}, want: "always"},
+		{args: []string{"summary", "--no-color"}, want: "never"},
+	} {
+		invocation, err = parseInvocation(test.args)
+		if err != nil || invocation.kind != commandSummary || invocation.color != test.want {
+			t.Fatalf("summary invocation=%#v err=%v, want color %q", invocation, err, test.want)
+		}
 	}
 }
 

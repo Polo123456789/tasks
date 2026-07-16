@@ -60,8 +60,12 @@ func TestPruneKeepsEntryWhenFilesystemCheckFailsTransiently(t *testing.T) {
 	if _, err = registry.db.Exec("INSERT INTO projects(path) VALUES(?)", loop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = registry.Prune(context.Background()); err == nil {
+	live, err := registry.Prune(context.Background())
+	if err == nil {
 		t.Fatal("expected the filesystem error to be reported")
+	}
+	if !reflect.DeepEqual(live, []string{loop}) {
+		t.Fatalf("transiently unavailable project omitted from partial result: %v", live)
 	}
 	paths, err := registry.Projects(context.Background())
 	if err != nil || !reflect.DeepEqual(paths, []string{loop}) {

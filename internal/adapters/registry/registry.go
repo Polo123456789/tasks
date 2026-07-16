@@ -61,6 +61,7 @@ func (r *SQLite) Prune(ctx context.Context) ([]string, error) {
 		return nil, e
 	}
 	var live []string
+	var errs []error
 	for _, p := range paths {
 		st, statErr := os.Stat(p)
 		if statErr == nil && !st.IsDir() {
@@ -68,12 +69,14 @@ func (r *SQLite) Prune(ctx context.Context) ([]string, error) {
 			continue
 		}
 		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return nil, fmt.Errorf("check registered project %q: %w", p, statErr)
+			live = append(live, p)
+			errs = append(errs, fmt.Errorf("check registered project %q: %w", p, statErr))
+			continue
 		}
 		if _, e = r.db.ExecContext(ctx, "DELETE FROM projects WHERE path=?", p); e != nil {
-			return nil, e
+			errs = append(errs, e)
 		}
 	}
-	return live, nil
+	return live, errors.Join(errs...)
 }
 func (r *SQLite) Close() error { return r.db.Close() }

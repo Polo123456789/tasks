@@ -1,0 +1,361 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
+	"unicode"
+
+	"github.com/Polo123456789/tasks/internal/application"
+	"github.com/Polo123456789/tasks/internal/domain"
+	"github.com/Polo123456789/tasks/internal/ports"
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/term"
+)
+
+const summaryMaxLines = 20
+
+type summaryKind int
+
+const (
+	summaryOverdue summaryKind = iota
+	summaryToday
+	summaryActive
+)
+
+type summaryGroup struct {
+	kind  summaryKind
+	label string
+	tasks []domain.Task
+}
+
+type summaryRenderOptions struct {
+	today       domain.Date
+	width       int
+	color       bool
+	showProject bool
+	partial     bool
+}
+
+func writeSummary(ctx context.Context, output io.Writer, service *application.Service, today domain.Date, colorMode string, partial bool) error {
+	tasks, listErr := service.ListTasks(ctx, ports.TaskFilter{Sort: "updated"})
+	partial = partial || listErr != nil
+	if listErr != nil {
+		// A global summary remains useful when one registered project is
+		// temporarily unavailable. The visible warning prevents a partial result
+		// from looking complete while keeping shell startup reliable.
+		partial = true
+	}
+	options := summaryRenderOptions{
+		today:       today,
+		width:       summaryOutputWidth(output),
+		color:       summaryColorEnabled(output, colorMode),
+		showProject: service.Mode == domain.ModeGlobal,
+		partial:     partial,
+	}
+	_, writeErr := io.WriteString(output, renderSummary(tasks, options))
+	return writeErr
+}
+
+func groupSummaryTasks(tasks []domain.Task, today domain.Date) []summaryGroup {
+	groups := []summaryGroup{
+		{kind: summaryOverdue, label: "ATRASADAS"},
+		{kind: summaryToday, label: "PARA HOY"},
+		{kind: summaryActive, label: "ACTIVAS"},
+	}
+	for _, task := range tasks {
+		if task.DeletedAt != nil || task.Status.Kind == domain.StatusDone || task.Status.Kind == domain.StatusCancelled {
+			continue
+		}
+		switch {
+		case task.Due != nil && task.Due.Before(today):
+			groups[0].tasks = append(groups[0].tasks, task)
+		case taskBelongsToToday(task, today):
+			groups[1].tasks = append(groups[1].tasks, task)
+		case task.Status.Kind == domain.StatusNormal && !task.Status.Initial:
+			groups[2].tasks = append(groups[2].tasks, task)
+		}
+	}
+	sort.SliceStable(groups[0].tasks, func(i, j int) bool {
+		left, right := groups[0].tasks[i], groups[0].tasks[j]
+		if !left.Due.Equal(*right.Due) {
+			return left.Due.Before(*right.Due)
+		}
+		return summaryTaskLess(left, right)
+	})
+	for index := 1; index < len(groups); index++ {
+		sort.SliceStable(groups[index].tasks, func(i, j int) bool {
+			return summaryTaskLess(groups[index].tasks[i], groups[index].tasks[j])
+		})
+	}
+	return groups
+}
+
+func taskBelongsToToday(task domain.Task, today domain.Date) bool {
+	if task.Recurrence != nil && task.RecurrenceAnchor != nil && !task.RecurrenceAnchor.After(today) {
+		return true
+	}
+	switch {
+	case task.Start != nil && task.Due != nil:
+		return !today.Before(*task.Start) && !today.After(*task.Due)
+	case task.Start != nil:
+		return !today.Before(*task.Start)
+	case task.Due != nil:
+		return task.Due.Equal(today)
+	default:
+		return false
+	}
+}
+
+func summaryTaskLess(left, right domain.Task) bool {
+	if left.Priority != right.Priority {
+		return left.Priority > right.Priority
+	}
+	if left.Blocked != right.Blocked {
+		return !left.Blocked
+	}
+	if !left.UpdatedAt.Equal(right.UpdatedAt) {
+		return left.UpdatedAt.After(right.UpdatedAt)
+	}
+	if left.Project != right.Project {
+		return left.Project < right.Project
+	}
+	return left.ID < right.ID
+}
+
+func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
+	if options.width <= 0 {
+		options.width = 80
+	}
+	groups := groupSummaryTasks(tasks, options.today)
+	nonempty := groups[:0]
+	for _, group := range groups {
+		if len(group.tasks) > 0 {
+			nonempty = append(nonempty, group)
+		}
+	}
+	groups = nonempty
+
+	lines := []string{summaryStyled(summaryHeader(options.today), summaryHeaderStyle, options.color)}
+	if len(groups) == 0 {
+		lines = append(lines, summaryStyled("  ✓ Nada pendiente para hoy", summarySuccessStyle, options.color))
+	} else {
+		warningLines := 0
+		if options.partial {
+			warningLines = 1
+		}
+		bodyBudget := summaryMaxLines - len(lines) - len(groups) - warningLines
+		quotas := allocateSummaryLines(groups, bodyBudget)
+		for index, group := range groups {
+			lines = append(lines, summaryStyled(fmt.Sprintf("%s · %d", group.label, len(group.tasks)), summaryGroupStyle(group.kind), options.color))
+			quota := quotas[index]
+			shown := quota
+			showRemainder := quota >= 2 && quota < len(group.tasks)
+			if showRemainder {
+				shown--
+			}
+			for taskIndex := 0; taskIndex < shown; taskIndex++ {
+				line := summaryTaskLine(group.tasks[taskIndex], group.kind, options)
+				lines = append(lines, summaryStyled(line, summaryTaskStyle(group.kind), options.color))
+			}
+			if showRemainder {
+				remaining := len(group.tasks) - shown
+				lines = append(lines, summaryStyled(fmt.Sprintf("  … %d más", remaining), summaryMutedStyle, options.color))
+			}
+		}
+	}
+	if options.partial {
+		lines = append(lines, summaryStyled("⚠ Resumen parcial: revisa tasks.log", summaryWarningStyle, options.color))
+	}
+	for index := range lines {
+		lines[index] = truncateSummaryLine(lines[index], options.width, options.color)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func allocateSummaryLines(groups []summaryGroup, budget int) []int {
+	quotas := make([]int, len(groups))
+	if budget <= 0 {
+		return quotas
+	}
+	for index := range groups {
+		if budget == 0 {
+			return quotas
+		}
+		quotas[index] = 1
+		budget--
+	}
+	for budget > 0 {
+		allocated := false
+		for index := range groups {
+			if budget == 0 {
+				break
+			}
+			if quotas[index] >= len(groups[index].tasks) {
+				continue
+			}
+			quotas[index]++
+			budget--
+			allocated = true
+		}
+		if !allocated {
+			break
+		}
+	}
+	return quotas
+}
+
+func summaryHeader(today domain.Date) string {
+	weekdays := [...]string{"dom", "lun", "mar", "mié", "jue", "vie", "sáb"}
+	months := [...]string{"", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
+	date := today.Time()
+	return fmt.Sprintf("tasks · %s %d %s", weekdays[date.Weekday()], date.Day(), months[date.Month()])
+}
+
+func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOptions) string {
+	markers := [...]string{"!", "◆", "▶"}
+	title := cleanSummaryText(task.Title)
+	if options.showProject && task.Project != "" {
+		project := cleanSummaryText(application.ProjectName(task.Project))
+		if project != "" {
+			title = "[" + project + "] " + title
+		}
+	}
+	metadata := make([]string, 0, 5)
+	if task.Blocked {
+		metadata = append(metadata, "bloqueada")
+	}
+	if task.Priority != domain.PriorityNone {
+		metadata = append(metadata, strings.ToLower(task.Priority.String()))
+	}
+	if task.SubtaskCount > 0 {
+		metadata = append(metadata, fmt.Sprintf("%d/%d subt.", task.SubtaskDoneCount, task.SubtaskCount))
+	}
+	if kind == summaryOverdue && task.Due != nil {
+		metadata = append(metadata, "venció "+summaryDate(*task.Due, options.today))
+	} else if task.Recurrence != nil {
+		metadata = append(metadata, "recurrente")
+	} else if kind == summaryActive && task.Start != nil && task.Start.After(options.today) {
+		if task.Due != nil {
+			metadata = append(metadata, summaryDate(*task.Start, options.today)+"–"+summaryDate(*task.Due, options.today))
+		} else {
+			metadata = append(metadata, "empieza "+summaryDate(*task.Start, options.today))
+		}
+	} else if task.Due != nil {
+		if task.Due.Equal(options.today) {
+			metadata = append(metadata, "vence hoy")
+		} else {
+			metadata = append(metadata, "vence "+summaryDate(*task.Due, options.today))
+		}
+	} else if task.Start != nil && !task.Start.Equal(options.today) {
+		metadata = append(metadata, "desde "+summaryDate(*task.Start, options.today))
+	}
+	if kind == summaryActive {
+		if status := cleanSummaryText(task.Status.Name); status != "" {
+			metadata = append(metadata, status)
+		}
+	}
+	line := fmt.Sprintf("  %s %s", markers[kind], title)
+	if len(metadata) > 0 {
+		line += " · " + strings.Join(metadata, " · ")
+	}
+	return line
+}
+
+func summaryDate(value, today domain.Date) string {
+	months := [...]string{"", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
+	date := value.Time()
+	if date.Year() != today.Time().Year() {
+		return fmt.Sprintf("%d %s %d", date.Day(), months[date.Month()], date.Year())
+	}
+	return fmt.Sprintf("%d %s", date.Day(), months[date.Month()])
+}
+
+func cleanSummaryText(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func summaryOutputWidth(output io.Writer) int {
+	width := 80
+	if file, ok := output.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		if terminalWidth, _, err := term.GetSize(int(file.Fd())); err == nil && terminalWidth > 0 {
+			width = terminalWidth
+		}
+	}
+	if width > 100 {
+		return 100
+	}
+	if width < 20 {
+		return 20
+	}
+	return width
+}
+
+func summaryColorEnabled(output io.Writer, mode string) bool {
+	switch mode {
+	case "always":
+		return true
+	case "never":
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	file, ok := output.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+type summaryStyle string
+
+const (
+	summaryHeaderStyle  summaryStyle = "1;36"
+	summaryDangerStyle  summaryStyle = "1;31"
+	summaryTodayStyle   summaryStyle = "1;33"
+	summaryActiveStyle  summaryStyle = "1;32"
+	summarySuccessStyle summaryStyle = "32"
+	summaryMutedStyle   summaryStyle = "2;37"
+	summaryWarningStyle summaryStyle = "33"
+)
+
+func summaryGroupStyle(kind summaryKind) summaryStyle { return summaryTaskStyle(kind) }
+
+func summaryTaskStyle(kind summaryKind) summaryStyle {
+	switch kind {
+	case summaryOverdue:
+		return summaryDangerStyle
+	case summaryToday:
+		return summaryTodayStyle
+	default:
+		return summaryActiveStyle
+	}
+}
+
+func summaryStyled(value string, style summaryStyle, enabled bool) string {
+	if !enabled {
+		return value
+	}
+	return "\x1b[" + string(style) + "m" + value + "\x1b[0m"
+}
+
+func truncateSummaryLine(line string, width int, colored bool) string {
+	if !colored {
+		return runewidth.Truncate(line, width, "…")
+	}
+	start := strings.IndexByte(line, 'm')
+	end := strings.LastIndex(line, "\x1b[0m")
+	if start < 0 || end < start {
+		return line
+	}
+	prefix := line[:start+1]
+	content := line[start+1 : end]
+	return prefix + runewidth.Truncate(content, width, "…") + "\x1b[0m"
+}
