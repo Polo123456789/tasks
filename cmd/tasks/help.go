@@ -14,6 +14,7 @@ const (
 	commandAIPrompt
 	commandImport
 	commandSummary
+	commandIsProject
 )
 
 type invocation struct {
@@ -31,6 +32,7 @@ Uso:
   tasks ai-prompt
   tasks import nombre.tasks [resultado.json|-]
   tasks summary [--color=auto|always|never]
+  tasks is-project
   tasks help
   tasks -h
   tasks --help
@@ -41,6 +43,7 @@ Comandos:
   ai-prompt          Imprimir el prompt para convertir una conversación a JSON.
   import             Crear un proyecto nuevo desde JSON en un archivo o stdin.
   summary            Mostrar tareas relevantes y, dentro de un proyecto, su Gantt.
+  is-project         Validar si el directorio pertenece al árbol de un proyecto.
   help               Mostrar esta ayuda global.
 
 Opciones:
@@ -70,6 +73,14 @@ func parseInvocation(args []string) (invocation, error) {
 			return invocation{}, usageError("tasks ai-prompt")
 		}
 		return invocation{kind: commandAIPrompt}, nil
+	case "is-project":
+		if err := rejectUnknownOptions(args[1:], nil); err != nil {
+			return invocation{}, err
+		}
+		if len(args) != 1 {
+			return invocation{}, usageError("tasks is-project")
+		}
+		return invocation{kind: commandIsProject}, nil
 	case "init":
 		if err := rejectUnknownOptions(args[1:], nil); err != nil {
 			return invocation{}, err

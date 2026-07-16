@@ -222,10 +222,16 @@ func (b backend) Restore(c context.Context, path string, id, version int64) (dom
 }
 func main() {
 	if e := run(); e != nil {
+		if errors.Is(e, errNotInProject) {
+			os.Exit(1)
+		}
 		fmt.Fprintln(os.Stderr, "tasks:", e)
 		os.Exit(1)
 	}
 }
+
+var errNotInProject = errors.New("current directory is not in a project tree")
+
 func run() error {
 	return runArgs(os.Args[1:], os.Stdin, os.Stdout)
 }
@@ -247,6 +253,16 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 	cwd, e := os.Getwd()
 	if e != nil {
 		return e
+	}
+	if invocation.kind == commandIsProject {
+		project, discoverErr := filesystem.Discover(cwd)
+		if discoverErr != nil {
+			return discoverErr
+		}
+		if project == "" {
+			return errNotInProject
+		}
+		return nil
 	}
 	data, e := os.UserConfigDir()
 	if e != nil {

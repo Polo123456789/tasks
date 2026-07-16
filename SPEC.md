@@ -42,7 +42,9 @@ La ayuda global se muestra con `tasks help`, `tasks -h` o `tasks --help`. Las tr
 
 `tasks` sin argumentos conserva el arranque de la TUI. Cualquier comando u opción no reconocidos, incluso después de un comando válido, terminan con error y sugieren ejecutar `tasks help`; nunca continúan hacia la detección de modo. Los argumentos que comienzan con guion admitidos fuera de la ayuda global son `-` como origen stdin de `tasks import` y las opciones de color de `tasks summary`.
 
-La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `import`, `summary` y `help`. No existe ayuda específica por subcomando en esta versión. Los comandos conocidos con una cantidad incorrecta de argumentos muestran su sintaxis y la misma sugerencia de ayuda.
+La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `import`, `summary`, `is-project` y `help`. No existe ayuda específica por subcomando en esta versión. Los comandos conocidos con una cantidad incorrecta de argumentos muestran su sintaxis y la misma sugerencia de ayuda.
+
+`tasks is-project` reutiliza la búsqueda ascendente de proyecto como un predicado silencioso para shell. Termina con código `0` cuando encuentra exactamente un archivo `.tasks`, con código `1` sin escribir en stdout ni stderr cuando no encuentra ninguno, y conserva los errores descriptivos de detección para casos conflictivos o fallas del sistema de archivos. No abre el proyecto ni inicializa archivos de configuración.
 
 ### 2.4 Resumen no interactivo
 

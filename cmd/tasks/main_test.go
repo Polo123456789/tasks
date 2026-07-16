@@ -191,6 +191,50 @@ func TestAIPromptWritesStandaloneInstructions(t *testing.T) {
 	}
 }
 
+func TestIsProjectChecksAncestorsWithoutCreatingConfiguration(t *testing.T) {
+	root := t.TempDir()
+	projectDirectory := filepath.Join(root, "project")
+	child := filepath.Join(projectDirectory, "src", "nested")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDirectory, "local.tasks"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	var output bytes.Buffer
+	if err = os.Chdir(child); err != nil {
+		t.Fatal(err)
+	}
+	if err = runArgs([]string{"is-project"}, strings.NewReader(""), &output); err != nil {
+		t.Fatalf("inside project: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("inside project output=%q", output.String())
+	}
+
+	if err = os.Chdir(outside); err != nil {
+		t.Fatal(err)
+	}
+	if err = runArgs([]string{"is-project"}, strings.NewReader(""), &output); !errors.Is(err, errNotInProject) {
+		t.Fatalf("outside project error=%v", err)
+	}
+	if _, err = os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("is-project created configuration: %v", err)
+	}
+}
+
 func TestSummaryCommandRendersLocalProjectWithoutOpeningTUI(t *testing.T) {
 	directory := t.TempDir()
 	projectPath := filepath.Join(directory, "project.tasks")

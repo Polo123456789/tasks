@@ -36,6 +36,14 @@ tasks --help
 
 Ejecutar `tasks` sin argumentos continúa abriendo la TUI. Los comandos y opciones desconocidos terminan con error y sugieren ejecutar `tasks help`; nunca se interpretan como una solicitud para abrir la interfaz. La ayuda es global y no admite un nombre de subcomando.
 
+`tasks is-project` permite comprobar el contexto desde scripts de shell. No imprime nada: termina con código `0` si el directorio actual está dentro del árbol de un proyecto y con código `1` si no lo está.
+
+```sh
+if tasks is-project; then
+  echo "Proyecto activo"
+fi
+```
+
 ## Importar un proyecto desde una conversación con IA
 
 `tasks` no se conecta a ningún servicio externo. En su lugar, genera un prompt autocontenido para usarlo con el agente con el que se discutió el proyecto:

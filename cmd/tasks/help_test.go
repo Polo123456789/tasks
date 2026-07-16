@@ -24,7 +24,7 @@ func TestGlobalHelpAliasesMatchWithoutCreatingConfiguration(t *testing.T) {
 			t.Fatalf("%s output differs from global help", argument)
 		}
 	}
-	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks summary", "--color=", "-h, --help"} {
+	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks summary", "tasks is-project", "--color=", "-h, --help"} {
 		if !strings.Contains(expected, text) {
 			t.Fatalf("help missing %q", text)
 		}
@@ -44,6 +44,7 @@ func TestParseInvocationRejectsUnknownCommandsOptionsAndBadArity(t *testing.T) {
 		{name: "global option", args: []string{"--missing"}, want: `opción desconocida "--missing"`},
 		{name: "init option", args: []string{"init", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "prompt option", args: []string{"ai-prompt", "--missing"}, want: `opción desconocida "--missing"`},
+		{name: "is-project option", args: []string{"is-project", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "import target option", args: []string{"import", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "import source option", args: []string{"import", "project.tasks", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "help option", args: []string{"help", "--missing"}, want: `opción desconocida "--missing"`},
@@ -51,6 +52,7 @@ func TestParseInvocationRejectsUnknownCommandsOptionsAndBadArity(t *testing.T) {
 		{name: "init missing", args: []string{"init"}, want: "uso: tasks init nombre.tasks"},
 		{name: "init extra", args: []string{"init", "project.tasks", "extra"}, want: "uso: tasks init nombre.tasks"},
 		{name: "prompt extra", args: []string{"ai-prompt", "extra"}, want: "uso: tasks ai-prompt"},
+		{name: "is-project extra", args: []string{"is-project", "extra"}, want: "uso: tasks is-project"},
 		{name: "import missing", args: []string{"import"}, want: "uso: tasks import nombre.tasks"},
 		{name: "import extra", args: []string{"import", "project.tasks", "-", "extra"}, want: "uso: tasks import nombre.tasks"},
 		{name: "summary argument", args: []string{"summary", "extra"}, want: "uso: tasks summary"},
@@ -74,6 +76,10 @@ func TestParseInvocationPreservesTUIAndImportStdin(t *testing.T) {
 	invocation, err = parseInvocation([]string{"import", "project.tasks", "-"})
 	if err != nil || invocation.kind != commandImport || invocation.project != "project.tasks" || invocation.source != "-" {
 		t.Fatalf("import invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"is-project"})
+	if err != nil || invocation.kind != commandIsProject {
+		t.Fatalf("is-project invocation=%#v err=%v", invocation, err)
 	}
 	for _, test := range []struct {
 		args []string
