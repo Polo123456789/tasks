@@ -23,7 +23,7 @@ func InDirectory(dir string) ([]string, error) {
 	}
 	var found []string
 	for _, v := range entries {
-		if !v.IsDir() && strings.EqualFold(filepath.Ext(v.Name()), ".tasks") {
+		if !v.IsDir() && filepath.Ext(v.Name()) == ".tasks" {
 			found = append(found, filepath.Join(dir, v.Name()))
 		}
 	}

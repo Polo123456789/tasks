@@ -1,0 +1,719 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Polo123456789/tasks/internal/domain"
+	"github.com/Polo123456789/tasks/internal/ports"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+type fakeBackend struct {
+	mode               domain.Mode
+	tasks              []domain.Task
+	deleted            []domain.Task
+	trashCalls         int
+	restoreCalls       int
+	updateCalls        int
+	moveCalls          int
+	priorityCalls      int
+	dateCalls          int
+	addSubCalls        int
+	renameSubCalls     int
+	toggleSubCalls     int
+	addDepCalls        int
+	removeDepCalls     int
+	impact             []int64
+	lastFilter         ports.TaskFilter
+	today              domain.Date
+	maintainCalls      int
+	createStatusCalls  int
+	renameStatusCalls  int
+	initialStatusCalls int
+	reorderStatusCalls int
+	deleteStatusCalls  int
+	listErr            error
+}
+
+func (b *fakeBackend) Mode() domain.Mode { return b.mode }
+func (b *fakeBackend) ContextLabel() string {
+	if b.mode == domain.ModeGlobal {
+		return "Global"
+	}
+	return "Local · prueba"
+}
+func (b *fakeBackend) Today() domain.Date {
+	if b.today.IsZero() {
+		b.today, _ = domain.ParseDate("2026-07-15")
+	}
+	return b.today
+}
+func (b *fakeBackend) Maintain(context.Context) error {
+	b.maintainCalls++
+	return nil
+}
+func (b *fakeBackend) Capabilities() domain.Capabilities {
+	return domain.CapabilitiesFor(b.mode)
+}
+func (b *fakeBackend) List(_ context.Context, filter ports.TaskFilter) ([]domain.Task, error) {
+	b.lastFilter = filter
+	if filter.IncludeDeleted {
+		return b.deleted, b.listErr
+	}
+	return b.tasks, b.listErr
+}
+func (b *fakeBackend) Statuses(context.Context) ([]domain.Status, error) { return nil, nil }
+func (b *fakeBackend) Create(context.Context, string) (domain.Task, error) {
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) UpdateTitle(context.Context, string, int64, int64, string) (domain.Task, error) {
+	b.updateCalls++
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) MoveStatus(context.Context, string, int64, int64, int) (domain.Task, error) {
+	b.moveCalls++
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) SetLifecycle(context.Context, string, int64, int64, string) (domain.Task, error) {
+	b.moveCalls++
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) CyclePriority(context.Context, string, int64, int64) (domain.Task, error) {
+	b.priorityCalls++
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) UpdateDate(context.Context, string, int64, int64, string, *domain.Date) (domain.Task, error) {
+	b.dateCalls++
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) Detail(_ context.Context, _ string, id int64) (domain.Task, error) {
+	for _, task := range append(b.tasks, b.deleted...) {
+		if task.ID == id {
+			return task, nil
+		}
+	}
+	return domain.Task{}, domain.ErrNotFound
+}
+func (b *fakeBackend) History(context.Context, string, int64) ([]domain.HistoryEvent, error) {
+	return []domain.HistoryEvent{{Kind: "created"}}, nil
+}
+func (b *fakeBackend) AddSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+	b.addSubCalls++
+	return domain.Subtask{}, nil
+}
+func (b *fakeBackend) RenameSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+	b.renameSubCalls++
+	return domain.Subtask{}, nil
+}
+func (b *fakeBackend) ToggleSubtask(context.Context, string, int64, int64) error {
+	b.toggleSubCalls++
+	return nil
+}
+func (b *fakeBackend) MoveSubtaskStatus(context.Context, string, int64, int64, int) error {
+	return nil
+}
+func (b *fakeBackend) AddDependency(context.Context, string, int64, int64) error {
+	b.addDepCalls++
+	return nil
+}
+func (b *fakeBackend) RemoveDependency(context.Context, string, int64, int64) error {
+	b.removeDepCalls++
+	return nil
+}
+func (b *fakeBackend) DependencyCandidates(_ context.Context, _ string, taskID int64, existingOnly bool) ([]domain.Task, error) {
+	var selected domain.Task
+	for _, task := range b.tasks {
+		if task.ID == taskID {
+			selected = task
+		}
+	}
+	existing := make(map[int64]bool)
+	for _, id := range selected.DependencyIDs {
+		existing[id] = true
+	}
+	var out []domain.Task
+	for _, task := range b.tasks {
+		if task.ID != taskID && existing[task.ID] == existingOnly {
+			out = append(out, task)
+		}
+	}
+	return out, nil
+}
+func (b *fakeBackend) UpdateRecurrence(context.Context, string, int64, int64, *domain.Recurrence) (domain.Task, error) {
+	return domain.Task{}, nil
+}
+func (b *fakeBackend) CreateStatus(context.Context, string) (domain.Status, error) {
+	b.createStatusCalls++
+	return domain.Status{}, nil
+}
+func (b *fakeBackend) RenameStatus(context.Context, int64, string) error {
+	b.renameStatusCalls++
+	return nil
+}
+func (b *fakeBackend) SetInitialStatus(context.Context, int64) error {
+	b.initialStatusCalls++
+	return nil
+}
+func (b *fakeBackend) ReorderStatuses(context.Context, []int64) error {
+	b.reorderStatusCalls++
+	return nil
+}
+func (b *fakeBackend) DeleteStatus(context.Context, int64, *int64) error {
+	b.deleteStatusCalls++
+	return nil
+}
+func (b *fakeBackend) MarkdownEditor(context.Context, string, int64, int64) (tea.ExecCommand, func(error) error, error) {
+	return nil, nil, domain.ErrNotFound
+}
+func (b *fakeBackend) Trash(context.Context, string, int64, int64) ([]int64, error) {
+	b.trashCalls++
+	return nil, nil
+}
+func (b *fakeBackend) DependencyImpact(context.Context, string, int64) ([]domain.Task, error) {
+	result := make([]domain.Task, 0, len(b.impact))
+	for _, id := range b.impact {
+		result = append(result, domain.Task{ID: id, Title: "affected"})
+	}
+	return result, nil
+}
+func (b *fakeBackend) Restore(context.Context, string, int64, int64) (domain.Task, error) {
+	b.restoreCalls++
+	return domain.Task{}, nil
+}
+
+func key(value string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+func TestGlobalNavigationNeverEntersKanban(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal}
+	model := NewAt(backend, "kanban")
+	if model.view != 2 {
+		t.Fatalf("global initial view=%d, want calendar", model.view)
+	}
+	for i := 0; i < 20; i++ {
+		updated, _ := model.Update(key("l"))
+		model = updated.(Model)
+		if model.view == 0 || model.view == 5 {
+			t.Fatalf("global navigation entered forbidden view %d", model.view)
+		}
+	}
+}
+
+func TestQuitKeysReturnQuitCommand(t *testing.T) {
+	for _, value := range []string{"q", "ctrl+c"} {
+		model := New(&fakeBackend{mode: domain.ModeLocal})
+		var message tea.KeyMsg
+		if value == "ctrl+c" {
+			message = tea.KeyMsg{Type: tea.KeyCtrlC}
+		} else {
+			message = key(value)
+		}
+		_, command := model.Update(message)
+		if command == nil {
+			t.Fatalf("%s did not return quit command", value)
+		}
+		if _, ok := command().(tea.QuitMsg); !ok {
+			t.Fatalf("%s returned %T, want QuitMsg", value, command())
+		}
+	}
+}
+
+func TestQuitCancelsPendingDayWatcher(t *testing.T) {
+	model := New(&fakeBackend{mode: domain.ModeLocal})
+	done := make(chan tea.Msg, 1)
+	go func() { done <- model.waitForDayCheck()() }()
+
+	_, command := model.Update(key("q"))
+	if command == nil {
+		t.Fatal("q did not return quit command")
+	}
+	select {
+	case message := <-done:
+		if message != nil {
+			t.Fatalf("watcher returned %T, want nil", message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending day watcher was not cancelled")
+	}
+}
+
+func TestGlobalInitialLoadHidesDoneAndCancelled(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal}
+	model := New(backend)
+	_ = model.Init()()
+	if backend.lastFilter.IncludeDone || backend.lastFilter.IncludeCancelled {
+		t.Fatalf("global default filter=%#v", backend.lastFilter)
+	}
+}
+
+func TestPartialGlobalResultsRemainVisibleWhenOneProjectFails(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "available"}}, listErr: errors.New("broken.tasks: unavailable")}
+	model := New(backend)
+	updated, _ := model.Update(model.Init()())
+	model = updated.(Model)
+	if model.err != nil || len(model.tasks) != 1 || !strings.Contains(model.notice, "broken.tasks") {
+		t.Fatalf("partial state: err=%v tasks=%#v notice=%q", model.err, model.tasks, model.notice)
+	}
+}
+
+func TestTrashAndRestoreCommandsReloadTheirViews(t *testing.T) {
+	task := domain.Task{ID: 7, Title: "task", Version: 2, Project: "/p/project.tasks"}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}, deleted: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	msg := model.Init()()
+	updated, _ := model.Update(msg)
+	model = updated.(Model)
+	updated, cmd := model.Update(key("d"))
+	model = updated.(Model)
+	if cmd == nil || !model.loading {
+		t.Fatal("trash did not start asynchronous mutation")
+	}
+	updated, trashCmd := model.Update(cmd())
+	model = updated.(Model)
+	if trashCmd == nil {
+		t.Fatal("dependency check did not continue with trash")
+	}
+	updated, reload := model.Update(trashCmd())
+	model = updated.(Model)
+	if backend.trashCalls != 1 || reload == nil || model.notice != "Tarea enviada a la papelera" {
+		t.Fatalf("trash calls=%d notice=%q reload=%v", backend.trashCalls, model.notice, reload != nil)
+	}
+
+	model.view = 4
+	msg = model.load(true)()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	updated, cmd = model.Update(key("u"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("restore did not start mutation")
+	}
+	updated, reload = model.Update(cmd())
+	model = updated.(Model)
+	if backend.restoreCalls != 1 || reload == nil || model.notice != "Tarea restaurada" {
+		t.Fatalf("restore calls=%d notice=%q reload=%v", backend.restoreCalls, model.notice, reload != nil)
+	}
+}
+
+func TestTrashWithDependenciesRequiresConfirmation(t *testing.T) {
+	task := domain.Task{ID: 7, Title: "task", Version: 2}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}, impact: []int64{4, 9}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, check := model.Update(key("d"))
+	model = updated.(Model)
+	updated, trashCmd := model.Update(check())
+	model = updated.(Model)
+	if trashCmd != nil || model.confirmTrash == nil || backend.trashCalls != 0 {
+		t.Fatalf("confirmation state=%#v calls=%d", model.confirmTrash, backend.trashCalls)
+	}
+	updated, trashCmd = model.Update(key("y"))
+	model = updated.(Model)
+	if trashCmd == nil || model.confirmTrash != nil {
+		t.Fatal("confirmation did not start trash")
+	}
+	_, _ = model.Update(trashCmd())
+	if backend.trashCalls != 1 {
+		t.Fatalf("trash calls=%d", backend.trashCalls)
+	}
+}
+
+func TestSelectionClampsWhenSwitchingToShorterResult(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal}
+	model := New(backend)
+	model.selected = 8
+	updated, _ := model.Update(loaded{tasks: []domain.Task{{ID: 1, Title: "only"}}})
+	model = updated.(Model)
+	if model.selected != 0 {
+		t.Fatalf("selected=%d", model.selected)
+	}
+}
+
+func TestEditTitleAndMoveStatusRunAsynchronousMutations(t *testing.T) {
+	task := domain.Task{ID: 3, Title: "old", Version: 4}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(key("e"))
+	model = updated.(Model)
+	if !model.inputMode || model.input != "old" || model.inputAction != "edit" {
+		t.Fatalf("edit state: inputMode=%v input=%q action=%q", model.inputMode, model.input, model.inputAction)
+	}
+	model.input = "new"
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("edit did not return command")
+	}
+	updated, reload := model.Update(cmd())
+	model = updated.(Model)
+	if backend.updateCalls != 1 || reload == nil || model.notice != "Tarea editada" {
+		t.Fatalf("update calls=%d notice=%q reload=%v", backend.updateCalls, model.notice, reload != nil)
+	}
+	updated, cmd = model.Update(key("]"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("move did not return command")
+	}
+	_, _ = model.Update(cmd())
+	if backend.moveCalls != 1 {
+		t.Fatalf("move calls=%d", backend.moveCalls)
+	}
+}
+
+func TestSubtaskAndDependencyInteractions(t *testing.T) {
+	task := domain.Task{ID: 3, Title: "parent", Version: 1, Project: "/p.tasks", Subtasks: []domain.Subtask{{ID: 8, Title: "child"}}}
+	candidate := domain.Task{ID: 42, Title: "required", Version: 1, Project: "/p.tasks", Status: domain.Status{Name: "Pending"}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task, candidate}}
+	model := New(backend)
+	updated, cmd := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("task list did not request detail")
+	}
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	if model.detail == nil || len(model.detail.Subtasks) != 1 {
+		t.Fatalf("detail=%#v", model.detail)
+	}
+
+	updated, _ = model.Update(key("a"))
+	model = updated.(Model)
+	model.input = "new child"
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.addSubCalls != 1 {
+		t.Fatalf("add subtask calls=%d", backend.addSubCalls)
+	}
+
+	model.inputMode = false
+	updated, cmd = model.Update(key("t"))
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.toggleSubCalls != 1 {
+		t.Fatalf("toggle subtask calls=%d", backend.toggleSubCalls)
+	}
+
+	model.inputMode = false
+	updated, cmd = model.Update(key("g"))
+	model = updated.(Model)
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.addDepCalls != 1 {
+		t.Fatalf("add dependency calls=%d", backend.addDepCalls)
+	}
+
+	model.inputMode = false
+	backend.tasks[0].DependencyIDs = []int64{42}
+	model.tasks[0].DependencyIDs = []int64{42}
+	updated, cmd = model.Update(key("G"))
+	model = updated.(Model)
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.removeDepCalls != 1 {
+		t.Fatalf("remove dependency calls=%d", backend.removeDepCalls)
+	}
+}
+
+func TestGlobalModeHidesSubtaskAndDependencyCreation(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	for _, forbidden := range []string{"a", "g", "n"} {
+		updated, cmd := model.Update(key(forbidden))
+		model = updated.(Model)
+		if cmd != nil || model.inputMode {
+			t.Fatalf("global key %q exposed creation", forbidden)
+		}
+	}
+}
+
+func TestInteractiveSearchFiltersAndSorting(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal}
+	model := New(backend)
+	model.statuses = []domain.Status{{ID: 3, Name: "Review", Kind: domain.StatusNormal}}
+	applyInput := func(keyValue, value string) {
+		t.Helper()
+		updated, _ := model.Update(key(keyValue))
+		model = updated.(Model)
+		model.input = value
+		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		model = updated.(Model)
+		if cmd == nil {
+			t.Fatalf("filter %q did not reload", keyValue)
+		}
+		_ = cmd()
+	}
+	applyInput("/", "needle")
+	if model.filter.Query != "needle" {
+		t.Fatalf("title filter=%q", model.filter.Query)
+	}
+	applyInput("?", "markdown")
+	if model.filter.Markdown != "markdown" {
+		t.Fatalf("markdown filter=%q", model.filter.Markdown)
+	}
+	updated, _ := model.Update(key("S"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("j"))
+	model = updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("status picker did not reload")
+	}
+	_ = cmd()
+	if len(model.filter.StatusIDs) != 1 || model.filter.StatusIDs[0] != 3 {
+		t.Fatalf("status filter=%v", model.filter.StatusIDs)
+	}
+	applyInput("D", "2026-01-01..2026-01-31")
+	if model.filter.From == nil || model.filter.To == nil {
+		t.Fatalf("date filter=%#v", model.filter)
+	}
+	for _, keyValue := range []string{"B", "R", "1", "o"} {
+		updated, cmd := model.Update(key(keyValue))
+		model = updated.(Model)
+		if cmd == nil {
+			t.Fatalf("toggle %q did not reload", keyValue)
+		}
+	}
+	if !model.filter.OnlyBlocked || !model.filter.OnlyRecurring || len(model.filter.Priorities) != 1 || model.filter.Sort != "priority" {
+		t.Fatalf("combined filter=%#v", model.filter)
+	}
+	updated, cmd = model.Update(key("0"))
+	model = updated.(Model)
+	if cmd == nil || model.filter.Query != "" || model.filter.Markdown != "" || model.filter.Sort != "updated" {
+		t.Fatalf("reset filter=%#v", model.filter)
+	}
+}
+
+func TestDayChangeRunsMaintenanceAndRefreshes(t *testing.T) {
+	initial, _ := domain.ParseDate("2026-07-15")
+	next := initial.AddDays(1)
+	backend := &fakeBackend{mode: domain.ModeLocal, today: initial}
+	model := New(backend)
+	model.dayWatchStarted = true
+	backend.today = next
+	updated, cmd := model.Update(dayCheck{})
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("day change did not start maintenance")
+	}
+	updated, refresh := model.Update(cmd())
+	model = updated.(Model)
+	if backend.maintainCalls != 1 || refresh == nil || !model.today.Equal(next) {
+		t.Fatalf("calls=%d today=%s refresh=%v", backend.maintainCalls, model.today, refresh != nil)
+	}
+}
+
+func TestLocalStatusAdministrationInteractions(t *testing.T) {
+	statuses := []domain.Status{
+		{ID: 1, Name: "Pending", Kind: domain.StatusNormal, Position: 1, Initial: true},
+		{ID: 2, Name: "Progress", Kind: domain.StatusNormal, Position: 2},
+		{ID: 3, Name: "Done", Kind: domain.StatusDone, Position: 3},
+	}
+	backend := &fakeBackend{mode: domain.ModeLocal}
+	model := NewAt(backend, "settings")
+	model.statuses = statuses
+	updated, _ := model.Update(key("a"))
+	model = updated.(Model)
+	model.input = "Review"
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.createStatusCalls != 1 {
+		t.Fatalf("create calls=%d", backend.createStatusCalls)
+	}
+	model.inputMode = false
+	updated, cmd = model.Update(key("i"))
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.initialStatusCalls != 1 {
+		t.Fatalf("initial calls=%d", backend.initialStatusCalls)
+	}
+	model.inputMode = false
+	updated, cmd = model.Update(key("]"))
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.reorderStatusCalls != 1 {
+		t.Fatalf("reorder calls=%d", backend.reorderStatusCalls)
+	}
+	model.inputMode = false
+	updated, _ = model.Update(key("d"))
+	model = updated.(Model)
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+	if backend.deleteStatusCalls != 1 {
+		t.Fatalf("delete calls=%d", backend.deleteStatusCalls)
+	}
+}
+
+func TestHistoryOpensAndClosesFromTaskView(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, cmd := model.Update(key("H"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("history did not load")
+	}
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	if !model.historyOpen || len(model.history) != 1 {
+		t.Fatalf("history state=%v %#v", model.historyOpen, model.history)
+	}
+	updated, _ = model.Update(key("H"))
+	model = updated.(Model)
+	if model.historyOpen {
+		t.Fatal("history did not close")
+	}
+}
+
+func TestLifecycleActionsAndVisibilityFiltersUseDistinctKeys(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{{ID: 1, Title: "task", Version: 1}}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, cmd := model.Update(key("f"))
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("f did not start direct completion")
+	}
+	_, _ = model.Update(cmd())
+	if backend.moveCalls != 1 {
+		t.Fatalf("lifecycle calls=%d", backend.moveCalls)
+	}
+	before := model.filter.IncludeDone
+	updated, cmd = model.Update(key("F"))
+	model = updated.(Model)
+	if cmd == nil || model.filter.IncludeDone == before {
+		t.Fatal("F did not toggle completed visibility")
+	}
+}
+
+func TestHelpAndContextAreVisibleAtSmallTerminal(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal}
+	model := New(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updated.(Model)
+	updated, _ = model.Update(key("f1"))
+	model = updated.(Model)
+	view := model.View()
+	for _, expected := range []string{"Local · prueba", "AYUDA DE TASKS", "F1 o Esc"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("missing %q in help:\n%s", expected, view)
+		}
+	}
+}
+
+func TestCalendarSelectionSkipsTasksNotShownInMonth(t *testing.T) {
+	due, _ := domain.ParseDate("2026-07-20")
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "hidden"}, {ID: 2, Title: "visible", Due: &due}}}
+	model := NewAt(backend, "calendar")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	if model.selected != 1 {
+		t.Fatalf("calendar selected task index=%d, want visible index 1", model.selected)
+	}
+}
+
+func TestCalendarWithoutEventsDoesNotExposeAnInvisibleTask(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "hidden task"}}}
+	model := NewAt(backend, "calendar")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	if strings.Contains(model.View(), "hidden task") || model.loadDetail() != nil {
+		t.Fatalf("calendar exposed a task absent from the current month:\n%s", model.View())
+	}
+}
+
+func TestGlobalCreationKeysExplainRestriction(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(key("n"))
+	model = updated.(Model)
+	if !strings.Contains(model.notice, "Modo global") {
+		t.Fatalf("notice=%q", model.notice)
+	}
+}
+
+func TestRecurrenceStartsWithGuidedPicker(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{{ID: 1, Title: "task", Version: 1}}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(key("c"))
+	model = updated.(Model)
+	if !model.pickerOpen || model.pickerAction != "recurrence-kind" || len(model.pickerOptions) < 5 {
+		t.Fatalf("recurrence picker=%v action=%q options=%d", model.pickerOpen, model.pickerAction, len(model.pickerOptions))
+	}
+	model.pickerSelected = 2 // semanal
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if model.pickerAction != "recurrence-weekly-days" || len(model.pickerOptions) != 7 {
+		t.Fatalf("weekly picker action=%q options=%d", model.pickerAction, len(model.pickerOptions))
+	}
+	updated, _ = model.Update(key(" "))
+	model = updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("weekly day selection did not produce recurrence mutation")
+	}
+	if message := cmd().(mutated); message.err != nil {
+		t.Fatalf("weekly recurrence mutation: %v", message.err)
+	}
+}
+
+func TestCrowdedKanbanFitsEightyByTwentyFour(t *testing.T) {
+	statuses := []domain.Status{{ID: 1, Name: "Pending", Kind: domain.StatusNormal}, {ID: 2, Name: "Progress", Kind: domain.StatusNormal}, {ID: 3, Name: "Blocked", Kind: domain.StatusNormal}, {ID: 4, Name: "Cancelled", Kind: domain.StatusCancelled}, {ID: 5, Name: "Done", Kind: domain.StatusDone}}
+	tasks := make([]domain.Task, 40)
+	for index := range tasks {
+		tasks[index] = domain.Task{ID: int64(index + 1), Title: "long task title", StatusID: 1, Status: statuses[0]}
+	}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: tasks}
+	model := New(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: tasks, statuses: statuses})
+	model = updated.(Model)
+	if lines := strings.Count(model.View(), "\n") + 1; lines > 24 {
+		t.Fatalf("rendered %d lines in 24-row terminal:\n%s", lines, model.View())
+	}
+}
+
+func TestReloadPreservesSelectedTaskIdentityAfterResorting(t *testing.T) {
+	first := domain.Task{ID: 1, Title: "first", Project: "/p.tasks"}
+	second := domain.Task{ID: 2, Title: "second", Project: "/p.tasks"}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{first, second}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	model.selected = 1
+	updated, _ = model.Update(mutated{action: "updated"})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: []domain.Task{second, first}})
+	model = updated.(Model)
+	if model.selected != 0 || model.tasks[model.selected].ID != second.ID {
+		t.Fatalf("selected index=%d task=%#v", model.selected, model.tasks[model.selected])
+	}
+}

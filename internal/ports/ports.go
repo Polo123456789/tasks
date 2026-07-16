@@ -19,6 +19,7 @@ type Registry interface {
 type TaskFilter struct {
 	Query, Markdown, Project                                                  string
 	StatusIDs                                                                 []int64
+	StatusNames                                                               []string
 	Priorities                                                                []domain.Priority
 	IncludeDone, IncludeCancelled, IncludeDeleted, OnlyBlocked, OnlyRecurring bool
 	From, To                                                                  *domain.Date
@@ -28,15 +29,20 @@ type TaskStore interface {
 	Statuses(context.Context) ([]domain.Status, error)
 	CreateStatus(context.Context, string, bool) (domain.Status, error)
 	RenameStatus(context.Context, int64, string) error
+	SetInitialStatus(context.Context, int64) error
+	ReorderStatuses(context.Context, []int64) error
 	DeleteStatus(context.Context, int64, *int64) error
 	ListTasks(context.Context, TaskFilter) ([]domain.Task, error)
 	Task(context.Context, int64) (domain.Task, error)
 	CreateTask(context.Context, domain.Task) (domain.Task, error)
 	UpdateTask(context.Context, domain.Task) (domain.Task, error)
 	SetTaskStatus(context.Context, int64, int64, int64) (domain.Task, error)
+	SetTaskPriority(context.Context, int64, domain.Priority, int64) (domain.Task, error)
+	DependencyImpact(context.Context, int64) ([]int64, error)
 	TrashTask(context.Context, int64, int64, domain.Date) ([]int64, error)
 	RestoreTask(context.Context, int64, int64) (domain.Task, error)
 	AddSubtask(context.Context, int64, string) (domain.Subtask, error)
+	RenameSubtask(context.Context, int64, string) (domain.Subtask, error)
 	SetSubtaskStatus(context.Context, int64, int64) error
 	AddDependency(context.Context, int64, int64) error
 	RemoveDependency(context.Context, int64, int64) error

@@ -3,43 +3,67 @@ package editor
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-func Edit(ctx context.Context, content string) (string, error) {
+type Session struct {
+	cmd      *exec.Cmd
+	filename string
+}
+
+func NewSession(ctx context.Context, content string) (*Session, error) {
 	command := os.Getenv("VISUAL")
 	if command == "" {
 		command = os.Getenv("EDITOR")
 	}
 	if command == "" {
-		return "", fmt.Errorf("configure $VISUAL or $EDITOR")
+		return nil, fmt.Errorf("configure $VISUAL or $EDITOR")
 	}
 	f, e := os.CreateTemp("", "tasks-*.md")
 	if e != nil {
-		return "", e
+		return nil, e
 	}
 	name := f.Name()
-	defer os.Remove(name)
 	if _, e = f.WriteString(content); e != nil {
 		f.Close()
-		return "", e
+		os.Remove(name)
+		return nil, e
 	}
 	if e = f.Close(); e != nil {
-		return "", e
+		os.Remove(name)
+		return nil, e
 	}
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
-		return "", fmt.Errorf("empty editor command")
+		os.Remove(name)
+		return nil, fmt.Errorf("empty editor command")
 	}
-	cmd := exec.CommandContext(ctx, parts[0], append(parts[1:], name)...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if e = cmd.Run(); e != nil {
-		return "", fmt.Errorf("editor: %w", e)
+	return &Session{cmd: exec.CommandContext(ctx, parts[0], append(parts[1:], name)...), filename: name}, nil
+}
+
+func (s *Session) Run() error            { return s.cmd.Run() }
+func (s *Session) SetStdin(r io.Reader)  { s.cmd.Stdin = r }
+func (s *Session) SetStdout(w io.Writer) { s.cmd.Stdout = w }
+func (s *Session) SetStderr(w io.Writer) { s.cmd.Stderr = w }
+func (s *Session) Finish(runErr error) (string, error) {
+	defer os.Remove(s.filename)
+	if runErr != nil {
+		return "", fmt.Errorf("editor: %w", runErr)
 	}
-	b, e := os.ReadFile(name)
+	b, e := os.ReadFile(s.filename)
 	return string(b), e
+}
+
+func Edit(ctx context.Context, content string) (string, error) {
+	session, err := NewSession(ctx, content)
+	if err != nil {
+		return "", err
+	}
+	session.SetStdin(os.Stdin)
+	session.SetStdout(os.Stdout)
+	session.SetStderr(os.Stderr)
+	return session.Finish(session.Run())
 }

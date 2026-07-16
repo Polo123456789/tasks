@@ -9,5 +9,7 @@ CREATE TABLE history(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES
 CREATE INDEX tasks_status ON tasks(status_id,deleted_at);
 CREATE INDEX dependencies_target ON dependencies(depends_on_id);
 CREATE INDEX history_task ON history(task_id,id);
-PRAGMA user_version=1;
+CREATE TABLE project_config(key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+INSERT INTO project_config(key,value) VALUES ('trash_retention_days','30');
+PRAGMA user_version=2;
 COMMIT;

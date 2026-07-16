@@ -536,6 +536,8 @@ En la rama principal o antes de publicar:
 
 ## 7. Proceso específico para cambios de UI
 
+Cada cambio deberá conservar el contrato de interacción descrito en `docs/ui-ux.md`: contexto visible, ayuda progresiva, selección perceptible, operaciones sin IDs manuales y viewport seguro para terminales pequeñas.
+
 Cada pantalla seguirá este flujo:
 
 1. Definir fixtures: vacío, normal, saturado, error y loading.

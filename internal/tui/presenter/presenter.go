@@ -9,8 +9,22 @@ import (
 type Task struct {
 	ID                                              int64
 	Source, Project, Title, Status, Priority, Dates string
+	Start, Due                                      string
+	DeletedAt                                       string
+	Markdown                                        string
+	Recurrence                                      string
 	Blocked, Recurring                              bool
+	SubtasksDone, SubtasksTotal, Dependencies       int
+	Subtasks                                        []Subtask
+	DependencyIDs                                   []int64
 	Version                                         int64
+}
+
+type Subtask struct {
+	ID     int64
+	Title  string
+	Status string
+	Done   bool
 }
 
 func Tasks(in []domain.Task) []Task {
@@ -28,9 +42,46 @@ func Tasks(in []domain.Task) []Task {
 		}
 		project := ""
 		if v.Project != "" {
-			project = filepath.Base(v.Project)
+			base := filepath.Base(v.Project)
+			project = base[:len(base)-len(filepath.Ext(base))]
 		}
-		out = append(out, Task{v.ID, v.Project, project, v.Title, v.Status.Name, v.Priority.String(), dates, v.Blocked, v.Recurrence != nil, v.Version})
+		done, total, dependencies := v.SubtaskDoneCount, v.SubtaskCount, v.DependencyCount
+		if len(v.Subtasks) > 0 {
+			total = len(v.Subtasks)
+			done = 0
+			for _, subtask := range v.Subtasks {
+				if subtask.Status.Kind == domain.StatusDone {
+					done++
+				}
+			}
+		}
+		if len(v.DependencyIDs) > 0 {
+			dependencies = len(v.DependencyIDs)
+		}
+		subtasks := make([]Subtask, 0, len(v.Subtasks))
+		for _, subtask := range v.Subtasks {
+			subtasks = append(subtasks, Subtask{ID: subtask.ID, Title: subtask.Title, Status: subtask.Status.Name, Done: subtask.Status.Kind == domain.StatusDone})
+		}
+		out = append(out, Task{
+			ID: v.ID, Source: v.Project, Project: project, Title: v.Title,
+			Status: v.Status.Name, Priority: v.Priority.String(), Dates: dates,
+			Markdown: v.Markdown, Blocked: v.Blocked, Recurring: v.Recurrence != nil,
+			SubtasksDone: done, SubtasksTotal: total, Dependencies: dependencies,
+			Subtasks: subtasks, DependencyIDs: append([]int64(nil), v.DependencyIDs...),
+			Version: v.Version,
+		})
+		if v.Recurrence != nil {
+			out[len(out)-1].Recurrence = v.Recurrence.HumanText()
+		}
+		if v.Start != nil {
+			out[len(out)-1].Start = v.Start.String()
+		}
+		if v.Due != nil {
+			out[len(out)-1].Due = v.Due.String()
+		}
+		if v.DeletedAt != nil {
+			out[len(out)-1].DeletedAt = v.DeletedAt.String()
+		}
 	}
 	return out
 }

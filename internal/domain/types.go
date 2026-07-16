@@ -69,12 +69,16 @@ type Task struct {
 	CreatedAt, UpdatedAt time.Time
 	Subtasks             []Subtask
 	DependencyIDs        []int64
+	SubtaskDoneCount     int
+	SubtaskCount         int
+	DependencyCount      int
 	Blocked              bool
 }
 type Subtask struct {
 	ID, TaskID int64
 	Title      string
 	StatusID   int64
+	Status     Status
 }
 type HistoryEvent struct {
 	ID, TaskID   int64
@@ -106,6 +110,11 @@ func ValidateTask(t Task) error {
 	}
 	if t.Recurrence != nil && (t.Start != nil || t.Due != nil) {
 		return ValidationError{"recurrence", "recurring tasks cannot have dates"}
+	}
+	if t.Recurrence != nil {
+		if err := t.Recurrence.Validate(); err != nil {
+			return ValidationError{"recurrence", err.Error()}
+		}
 	}
 	return nil
 }
