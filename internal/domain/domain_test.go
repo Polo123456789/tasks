@@ -30,6 +30,17 @@ func TestValidateTask(t *testing.T) {
 		t.Fatalf("invalid recurrence must be a validation error: %v", e)
 	}
 }
+func TestParsePriority(t *testing.T) {
+	for value, want := range map[string]Priority{"none": PriorityNone, "low": PriorityLow, "medium": PriorityMedium, "high": PriorityHigh, "urgent": PriorityUrgent} {
+		got, err := ParsePriority(value)
+		if err != nil || got != want {
+			t.Fatalf("ParsePriority(%q)=%v, %v; want %v", value, got, err, want)
+		}
+	}
+	if _, err := ParsePriority(""); !errors.Is(err, ErrValidation) {
+		t.Fatalf("empty priority error=%v", err)
+	}
+}
 func TestRecurrence(t *testing.T) {
 	cases := []struct {
 		r          Recurrence

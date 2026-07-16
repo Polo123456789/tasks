@@ -194,9 +194,18 @@ func Normalize(document Document, today domain.Date) (ProjectSeed, error) {
 		if _, exists := statusKeys[statusKey]; !exists {
 			return ProjectSeed{}, validation(path+".status", fmt.Sprintf("unknown status key %q", statusKey))
 		}
-		priority, err := parsePriority(task.Priority)
+		priorityValue := strings.TrimSpace(task.Priority)
+		if priorityValue == "" {
+			priorityValue = "none"
+		}
+		priority, err := domain.ParsePriority(priorityValue)
 		if err != nil {
-			return ProjectSeed{}, validation(path+".priority", err.Error())
+			message := err.Error()
+			var priorityError domain.ValidationError
+			if errors.As(err, &priorityError) {
+				message = priorityError.Message
+			}
+			return ProjectSeed{}, validation(path+".priority", message)
 		}
 		start, err := parseOptionalDate(task.Start)
 		if err != nil {
@@ -286,23 +295,6 @@ func Normalize(document Document, today domain.Date) (ProjectSeed, error) {
 		return ProjectSeed{}, err
 	}
 	return seed, nil
-}
-
-func parsePriority(value string) (domain.Priority, error) {
-	switch strings.TrimSpace(value) {
-	case "", "none":
-		return domain.PriorityNone, nil
-	case "low":
-		return domain.PriorityLow, nil
-	case "medium":
-		return domain.PriorityMedium, nil
-	case "high":
-		return domain.PriorityHigh, nil
-	case "urgent":
-		return domain.PriorityUrgent, nil
-	default:
-		return domain.PriorityNone, fmt.Errorf("must be one of none, low, medium, high, urgent")
-	}
 }
 
 func parseOptionalDate(value *string) (*domain.Date, error) {

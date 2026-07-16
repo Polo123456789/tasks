@@ -303,6 +303,132 @@ func TestAddCommandRejectsEmptyBatchBeforeCreatingGlobalStore(t *testing.T) {
 	}
 }
 
+func TestNewCommandUsesDetectedProjectAndReturnsScriptableOutput(t *testing.T) {
+	root := t.TempDir()
+	projectDirectory := filepath.Join(root, "project")
+	nested := filepath.Join(projectDirectory, "src")
+	if err := os.MkdirAll(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(projectDirectory, "local.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	parsed, err := parseInvocation([]string{"new", "--priority", "high", "--start", "2026-07-20", "--due=2026-07-22", "Preparar entrega"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := createQuickTask(context.Background(), nested, parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Destination != (addDestination{Kind: "project", Path: projectPath}) || output.Task.ID == 0 {
+		t.Fatalf("output=%#v", output)
+	}
+	encoded, err := json.Marshal(output)
+	if err != nil || !strings.Contains(string(encoded), `"destination":{"kind":"project","path":"`+projectPath+`"}`) || !strings.Contains(string(encoded), `"task":{"id":1}`) {
+		t.Fatalf("JSON=%s err=%v", encoded, err)
+	}
+	if _, err = os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("contextual project new created global configuration: %v", err)
+	}
+
+	store, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task, err := store.Task(context.Background(), output.Task.ID)
+	if err != nil || task.Title != "Preparar entrega" || task.Priority != domain.PriorityHigh || task.Start == nil || task.Start.String() != "2026-07-20" || task.Due == nil || task.Due.String() != "2026-07-22" {
+		t.Fatalf("task=%#v err=%v", task, err)
+	}
+}
+
+func TestNewCommandCanSelectGlobalOrExplicitProject(t *testing.T) {
+	root := t.TempDir()
+	projectDirectory := filepath.Join(root, "project")
+	if err := os.Mkdir(projectDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(projectDirectory, "local.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	globalInvocation, err := parseInvocation([]string{"new", "--global", "--", "-Personal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalOutput, err := createQuickTask(context.Background(), projectDirectory, globalInvocation)
+	if err != nil || globalOutput.Destination != (addDestination{Kind: "global"}) || globalOutput.Task.ID == 0 {
+		t.Fatalf("global output=%#v err=%v", globalOutput, err)
+	}
+
+	explicitInvocation, err := parseInvocation([]string{"new", "--project", "local.tasks", "Local explícita"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitOutput, err := createQuickTask(context.Background(), projectDirectory, explicitInvocation)
+	if err != nil || explicitOutput.Destination != (addDestination{Kind: "project", Path: projectPath}) || explicitOutput.Task.ID == 0 {
+		t.Fatalf("project output=%#v err=%v", explicitOutput, err)
+	}
+
+	globalStore, err := db.Open(filepath.Join(config, "tasks", "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalTasks, err := globalStore.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr := globalStore.Close()
+	if err != nil || closeErr != nil || len(globalTasks) != 1 || globalTasks[0].Title != "-Personal" {
+		t.Fatalf("global tasks=%#v err=%v close=%v", globalTasks, err, closeErr)
+	}
+	store, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectTasks, err := store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr = store.Close()
+	if err != nil || closeErr != nil || len(projectTasks) != 1 || projectTasks[0].Title != "Local explícita" {
+		t.Fatalf("project tasks=%#v err=%v close=%v", projectTasks, err, closeErr)
+	}
+}
+
+func TestNewCommandValidatesBeforeCreatingOrMutatingDestination(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+	for _, arguments := range [][]string{
+		{"new", "--global", "--priority", "critical", "Invalid priority"},
+		{"new", "--global", "--start", "tomorrow", "Invalid start"},
+		{"new", "--global", "--start", "2026-07-22", "--due", "2026-07-20", "Invalid range"},
+		{"new", "--global", "   "},
+	} {
+		parsed, err := parseInvocation(arguments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = createQuickTask(context.Background(), root, parsed); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("args=%v error=%v", arguments, err)
+		}
+	}
+	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid new created configuration: %v", err)
+	}
+}
+
 func TestAIPromptWritesStandaloneInstructions(t *testing.T) {
 	var output bytes.Buffer
 	if err := runArgs([]string{"ai-prompt"}, strings.NewReader(""), &output); err != nil {

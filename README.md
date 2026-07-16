@@ -130,6 +130,25 @@ El lote completo se guarda de forma atómica. Las claves de tareas solo relacion
 }
 ```
 
+## Captura rápida desde la CLI
+
+`tasks new` crea una sola tarea sin abrir la TUI ni preparar JSON:
+
+```sh
+tasks new "Revisar el despliegue"
+tasks new --priority high --start 2026-07-20 --due 2026-07-22 "Preparar entrega"
+```
+
+Dentro del árbol de un proyecto, el destino predeterminado es el `.tasks` detectado; fuera de uno, es el almacén global. Se puede elegir de forma explícita con `--global` o `--project ruta.tasks`. La ayuda `tasks new --help` describe el destino antes de crear. La salida es JSON e incluye el origen y el ID local asignado:
+
+```json
+{"destination":{"kind":"project","path":"/ruta/proyecto.tasks"},"task":{"id":17}}
+```
+
+Prioridades válidas: `none`, `low`, `medium`, `high` y `urgent`. Las fechas usan `AAAA-MM-DD` y el vencimiento no puede preceder al inicio. `tasks add` conserva su semántica separada para lotes JSON.
+
+Si un título comienza por guion, separe las opciones con `--`, por ejemplo `tasks new -- "-Seguimiento"`. En la salida, `destination.path` aparece únicamente para destinos de proyecto; el origen global se identifica con `{"kind":"global"}`.
+
 ### Resumen para el inicio de la terminal
 
 `tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto muestra primero el Gantt del mes actual y después resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.

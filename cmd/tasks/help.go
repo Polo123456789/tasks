@@ -15,6 +15,8 @@ const (
 	commandImport
 	commandAdd
 	commandAddHelp
+	commandNew
+	commandNewHelp
 	commandSummary
 	commandIsProject
 )
@@ -24,7 +26,11 @@ type invocation struct {
 	project    string
 	source     string
 	color      string
+	priority   string
+	start      string
+	due        string
 	projectSet bool
+	global     bool
 }
 
 const helpText = `tasks — gestor local de tareas para terminal
@@ -35,6 +41,7 @@ Uso:
   tasks ai-prompt
   tasks import nombre.tasks [resultado.json|-]
   tasks add [--project ruta.tasks] [resultado.json|-]
+  tasks new [--priority nivel] [--start AAAA-MM-DD] [--due AAAA-MM-DD] [--global|--project ruta.tasks] "Título"
   tasks summary [--color=auto|always|never]
   tasks is-project
   tasks help
@@ -47,15 +54,44 @@ Comandos:
   ai-prompt          Imprimir el prompt para convertir una conversación a JSON.
   import             Crear un proyecto nuevo desde JSON en un archivo o stdin.
   add                Agregar un lote JSON. Formato: tasks add --help.
+  new                Crear una tarea rápidamente. Destino contextual; vea tasks new --help.
   summary            Mostrar tareas relevantes y, dentro de un proyecto, su Gantt.
   is-project         Validar si el directorio pertenece al árbol de un proyecto.
   help               Mostrar esta ayuda global.
 
 Opciones:
   -h, --help         Mostrar esta ayuda global.
-  --project ...      Archivo .tasks existente donde add escribirá el lote.
+	--project ...      Destino .tasks explícito para add o new.
+  --global           Usar explícitamente el almacén global con new.
   --color=...        Color de summary: auto, always o never.
   --no-color         Equivalente a --color=never.
+`
+
+const newHelpText = `tasks new — crear una tarea rápidamente
+
+Uso:
+  tasks new [opciones] "Título"
+  tasks new [opciones] -- "-Título"
+  tasks new -h
+  tasks new --help
+
+Destino:
+  Sin selector       Dentro de un proyecto, usar el .tasks detectado; fuera, Global.
+  --global           Usar el almacén global incluso dentro de un proyecto.
+  --project ruta     Usar el archivo .tasks existente indicado por ruta.
+  --project=ruta     Forma equivalente de indicar el proyecto.
+  --global y --project son mutuamente excluyentes.
+
+Opciones de la tarea:
+  --priority nivel   none, low, medium, high o urgent (por defecto: none).
+  --start fecha      Fecha de inicio en formato AAAA-MM-DD.
+  --due fecha        Fecha de vencimiento en formato AAAA-MM-DD.
+  Cada opción también admite la forma --opción=valor.
+  --                 Finalizar las opciones; permite títulos que empiezan por guion.
+
+El título es un único argumento, no puede quedar vacío y puede contener espacios.
+La tarea se valida completamente antes de abrir o crear el destino. La salida es
+JSON con el tipo de origen, su ruta cuando es un proyecto y el ID local creado.
 `
 
 const addHelpText = `tasks add — agregar tareas desde JSON
@@ -177,6 +213,8 @@ func parseInvocation(args []string) (invocation, error) {
 		return invocation, nil
 	case "add":
 		return parseAddInvocation(args[1:])
+	case "new":
+		return parseNewInvocation(args[1:])
 	case "summary":
 		parsed := invocation{kind: commandSummary, color: "auto"}
 		for _, argument := range args[1:] {
@@ -201,6 +239,104 @@ func parseInvocation(args []string) (invocation, error) {
 		}
 		return invocation{}, fmt.Errorf("comando desconocido %q. %s", args[0], helpSuggestion)
 	}
+}
+
+func parseNewInvocation(arguments []string) (invocation, error) {
+	if len(arguments) == 1 && (arguments[0] == "-h" || arguments[0] == "--help") {
+		return invocation{kind: commandNewHelp}, nil
+	}
+	parsed := invocation{kind: commandNew, priority: "none"}
+	var titleSet, prioritySet, startSet, dueSet bool
+	endOfOptions := false
+	for index := 0; index < len(arguments); index++ {
+		argument := arguments[index]
+		optionValue := func(alreadySet bool) (string, error) {
+			if alreadySet || index+1 >= len(arguments) || arguments[index+1] == "" || strings.HasPrefix(arguments[index+1], "-") {
+				return "", usageError(`tasks new [opciones] "Título"`)
+			}
+			index++
+			return arguments[index], nil
+		}
+		switch {
+		case endOfOptions:
+			if titleSet {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.source, titleSet = argument, true
+		case argument == "--":
+			if titleSet || index+1 >= len(arguments) {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			endOfOptions = true
+		case argument == "--global":
+			if parsed.global || parsed.projectSet {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.global = true
+		case argument == "--project":
+			if parsed.global {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			value, err := optionValue(parsed.projectSet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.project, parsed.projectSet = value, true
+		case strings.HasPrefix(argument, "--project="):
+			value := strings.TrimPrefix(argument, "--project=")
+			if parsed.global || parsed.projectSet || value == "" {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.project, parsed.projectSet = value, true
+		case argument == "--priority":
+			value, err := optionValue(prioritySet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.priority, prioritySet = value, true
+		case strings.HasPrefix(argument, "--priority="):
+			value := strings.TrimPrefix(argument, "--priority=")
+			if prioritySet || value == "" {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.priority, prioritySet = value, true
+		case argument == "--start":
+			value, err := optionValue(startSet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.start, startSet = value, true
+		case strings.HasPrefix(argument, "--start="):
+			value := strings.TrimPrefix(argument, "--start=")
+			if startSet || value == "" {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.start, startSet = value, true
+		case argument == "--due":
+			value, err := optionValue(dueSet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.due, dueSet = value, true
+		case strings.HasPrefix(argument, "--due="):
+			value := strings.TrimPrefix(argument, "--due=")
+			if dueSet || value == "" {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.due, dueSet = value, true
+		case strings.HasPrefix(argument, "-"):
+			return invocation{}, unknownOption(argument)
+		default:
+			if titleSet {
+				return invocation{}, usageError(`tasks new [opciones] "Título"`)
+			}
+			parsed.source, titleSet = argument, true
+		}
+	}
+	if !titleSet {
+		return invocation{}, usageError(`tasks new [opciones] "Título"`)
+	}
+	return parsed, nil
 }
 
 func parseAddInvocation(arguments []string) (invocation, error) {

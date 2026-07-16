@@ -53,6 +53,23 @@ func (p Priority) String() string {
 	return [...]string{"Ninguna", "Baja", "Media", "Alta", "Urgente"}[p]
 }
 
+func ParsePriority(value string) (Priority, error) {
+	switch strings.TrimSpace(value) {
+	case "none":
+		return PriorityNone, nil
+	case "low":
+		return PriorityLow, nil
+	case "medium":
+		return PriorityMedium, nil
+	case "high":
+		return PriorityHigh, nil
+	case "urgent":
+		return PriorityUrgent, nil
+	default:
+		return PriorityNone, ValidationError{Field: "priority", Message: "must be one of none, low, medium, high, urgent"}
+	}
+}
+
 type StatusKind string
 
 const (

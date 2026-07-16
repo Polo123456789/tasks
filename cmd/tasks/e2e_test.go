@@ -393,4 +393,38 @@ func TestE2EImportCommandCreatesRegisteredProjectAndExits(t *testing.T) {
 	if err != nil || closeErr != nil || len(globalTasks) != 1 || globalTasks[0].Title != "Agregada por comando" {
 		t.Fatalf("global tasks=%#v err=%v close=%v", globalTasks, err, closeErr)
 	}
+
+	quickProject := exec.Command(binary, "new", "--project", "imported.tasks", "--priority", "urgent", "--due", "2026-07-25", "Captura local")
+	quickProject.Dir = projectDir
+	quickProject.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	quickProjectOutput, err := quickProject.CombinedOutput()
+	if err != nil || !strings.Contains(string(quickProjectOutput), `"destination":{"kind":"project","path":"`+projectPath+`"}`) || !strings.Contains(string(quickProjectOutput), `"task":{"id":3}`) {
+		t.Fatalf("project new err=%v output=%s", err, quickProjectOutput)
+	}
+	store, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quickTask, err := store.Task(context.Background(), 3)
+	closeErr = store.Close()
+	if err != nil || closeErr != nil || quickTask.Title != "Captura local" || quickTask.Priority != domain.PriorityUrgent || quickTask.Due == nil || quickTask.Due.String() != "2026-07-25" {
+		t.Fatalf("quick project task=%#v err=%v close=%v", quickTask, err, closeErr)
+	}
+
+	quickGlobal := exec.Command(binary, "new", "--global", "Captura global")
+	quickGlobal.Dir = projectDir
+	quickGlobal.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	quickGlobalOutput, err := quickGlobal.CombinedOutput()
+	if err != nil || !strings.Contains(string(quickGlobalOutput), `"destination":{"kind":"global"}`) || !strings.Contains(string(quickGlobalOutput), `"task":{"id":2}`) {
+		t.Fatalf("global new err=%v output=%s", err, quickGlobalOutput)
+	}
+	globalStore, err = db.Open(filepath.Join(config, "tasks", "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quickGlobalTask, err := globalStore.Task(context.Background(), 2)
+	closeErr = globalStore.Close()
+	if err != nil || closeErr != nil || quickGlobalTask.Title != "Captura global" {
+		t.Fatalf("quick global task=%#v err=%v close=%v", quickGlobalTask, err, closeErr)
+	}
 }

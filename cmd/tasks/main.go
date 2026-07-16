@@ -251,6 +251,10 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		_, e = io.WriteString(stdout, addHelpText)
 		return e
 	}
+	if invocation.kind == commandNewHelp {
+		_, e = io.WriteString(stdout, newHelpText)
+		return e
+	}
 	systemClock := clock.System{}
 	if invocation.kind == commandAIPrompt {
 		_, e := io.WriteString(stdout, projectimport.Prompt(systemClock.Today()))
@@ -274,6 +278,18 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		output, addErr := addTasks(context.Background(), cwd, invocation, stdin, systemClock)
 		if addErr != nil {
 			return addErr
+		}
+		var encoded bytes.Buffer
+		if e = json.NewEncoder(&encoded).Encode(output); e != nil {
+			return e
+		}
+		_, e = io.Copy(stdout, &encoded)
+		return e
+	}
+	if invocation.kind == commandNew {
+		output, newErr := createQuickTask(context.Background(), cwd, invocation)
+		if newErr != nil {
+			return newErr
 		}
 		var encoded bytes.Buffer
 		if e = json.NewEncoder(&encoded).Encode(output); e != nil {
@@ -408,6 +424,82 @@ type addOutput struct {
 	Destination addDestination              `json:"destination"`
 	Created     addCounts                   `json:"created"`
 	Tasks       []projectimport.CreatedTask `json:"tasks"`
+}
+
+type newTaskOutput struct {
+	ID int64 `json:"id"`
+}
+
+type newOutput struct {
+	Destination addDestination `json:"destination"`
+	Task        newTaskOutput  `json:"task"`
+}
+
+func createQuickTask(ctx context.Context, cwd string, invocation invocation) (output newOutput, resultErr error) {
+	priority, err := domain.ParsePriority(invocation.priority)
+	if err != nil {
+		return newOutput{}, err
+	}
+	parseDate := func(field, value string) (*domain.Date, error) {
+		if value == "" {
+			return nil, nil
+		}
+		date, parseErr := domain.ParseDate(value)
+		if parseErr != nil {
+			return nil, domain.ValidationError{Field: field, Message: parseErr.Error()}
+		}
+		return &date, nil
+	}
+	start, err := parseDate("start", invocation.start)
+	if err != nil {
+		return newOutput{}, err
+	}
+	due, err := parseDate("due", invocation.due)
+	if err != nil {
+		return newOutput{}, err
+	}
+	task := domain.Task{Title: invocation.source, Priority: priority, Start: start, Due: due}
+	if err = domain.ValidateTask(task); err != nil {
+		return newOutput{}, err
+	}
+
+	var store *db.Store
+	if invocation.projectSet {
+		projectPath, pathErr := existingProjectPath(cwd, invocation.project)
+		if pathErr != nil {
+			return newOutput{}, pathErr
+		}
+		store, err = db.Open(projectPath)
+		output.Destination = addDestination{Kind: "project", Path: projectPath}
+	} else if !invocation.global {
+		projectPath, discoverErr := filesystem.Discover(cwd)
+		if discoverErr != nil {
+			return newOutput{}, discoverErr
+		}
+		if projectPath != "" {
+			store, err = db.Open(projectPath)
+			output.Destination = addDestination{Kind: "project", Path: projectPath}
+		}
+	}
+	if store == nil && err == nil {
+		configDirectory, configErr := os.UserConfigDir()
+		if configErr != nil {
+			return newOutput{}, configErr
+		}
+		store, err = openGlobalStore(filepath.Join(configDirectory, "tasks", "global.sqlite"))
+		output.Destination = addDestination{Kind: "global"}
+	}
+	if err != nil {
+		return newOutput{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, store.Close()) }()
+
+	created, err := store.CreateTask(ctx, task)
+	if err != nil {
+		return newOutput{}, err
+	}
+	output.Task.ID = created.ID
+	return output, nil
 }
 
 func addTasks(ctx context.Context, cwd string, invocation invocation, stdin io.Reader, addClock ports.Clock) (output addOutput, resultErr error) {
