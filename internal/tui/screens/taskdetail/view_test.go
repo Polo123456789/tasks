@@ -59,3 +59,17 @@ func TestDetailLinesKeepSelectedSubtaskVisibleInTinyColumn(t *testing.T) {
 		t.Fatalf("selected subtask is not visible: %#v", lines)
 	}
 }
+
+func TestDetailLinesAlignSubtaskStatuses(t *testing.T) {
+	task := presenter.Task{Subtasks: []presenter.Subtask{
+		{Title: "Corta", Status: "Pendiente"},
+		{Title: "Una subtarea con un título largo", Status: "Finalizada", Done: true},
+	}}
+	lines := detailLines(task, 0, 60, 4)
+	if len(lines) < 3 {
+		t.Fatalf("subtask rows missing: %#v", lines)
+	}
+	if lipgloss.Width(lines[1][:strings.Index(lines[1], "[Pendiente]")]) != lipgloss.Width(lines[2][:strings.Index(lines[2], "[Finalizada]")]) {
+		t.Fatalf("status columns are not aligned:\n%s\n%s", lines[1], lines[2])
+	}
+}

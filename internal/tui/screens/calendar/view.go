@@ -11,11 +11,13 @@ import (
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/Polo123456789/tasks/internal/tui/screens/listutil"
 	"github.com/Polo123456789/tasks/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type event struct {
 	date       time.Time
-	text       string
+	title      string
+	origin     string
 	status     string
 	statusKind domain.StatusKind
 	taskIndex  int
@@ -45,15 +47,14 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 				continue
 			}
 			counts[date.Day()]++
-			label := task.Title
+			origin := ""
 			if task.Origin != "" {
-				origin := task.Origin
+				origin = task.Origin
 				if len(originSources[task.Origin]) > 1 && task.SourceKind != domain.OriginGlobal {
 					origin = task.Source
 				}
-				label += " [" + origin + "]"
 			}
-			events = append(events, event{date: date, text: label, status: task.Status, statusKind: task.StatusKind, taskIndex: taskIndex})
+			events = append(events, event{date: date, title: task.Title, origin: origin, status: task.Status, statusKind: task.StatusKind, taskIndex: taskIndex})
 		}
 	}
 	lines := []string{theme.Title.Render(monthTitle(month))}
@@ -89,7 +90,7 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 	}
 	sort.SliceStable(events, func(i, j int) bool {
 		if events[i].date.Equal(events[j].date) {
-			return events[i].text < events[j].text
+			return events[i].title+events[i].origin < events[j].title+events[j].origin
 		}
 		return events[i].date.Before(events[j].date)
 	})
@@ -106,24 +107,16 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 		}
 		available := max(1, height-len(lines)-3)
 		start, end := listutil.Bounds(len(events), selectedEvent, available)
+		layout := eventListLayout(events[start:end], width)
 		if start > 0 {
 			lines = append(lines, fmt.Sprintf("↑ %d evento(s) más", start))
 		}
 		for index := start; index < end; index++ {
 			item := events[index]
-			prefix := fmt.Sprintf("%02d · ", item.date.Day())
-			suffix := ""
-			if item.status != "" {
-				suffix = " · " + item.status
-			}
-			title := listutil.Truncate(item.text, max(1, width-2-len([]rune(prefix+suffix))))
-			line := prefix + title + suffix
+			line := renderEventRow(item, layout, width, item.taskIndex != selected)
 			if item.taskIndex == selected {
 				line = theme.Selected.Render("› " + line)
 			} else {
-				if item.status != "" {
-					line = prefix + title + " · " + theme.Status(item.statusKind, item.status).Render(item.status)
-				}
 				line = "  " + line
 			}
 			lines = append(lines, line)
@@ -136,6 +129,78 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 		lines = append(lines[:height-1], "…")
 	}
 	return strings.Join(lines, "\n")
+}
+
+type calendarEventLayout struct {
+	titleWidth, originWidth, statusWidth int
+}
+
+func eventListLayout(events []event, width int) calendarEventLayout {
+	layout := calendarEventLayout{}
+	maxTitleWidth := 0
+	for _, item := range events {
+		maxTitleWidth = max(maxTitleWidth, lipgloss.Width(item.title))
+		if item.origin != "" {
+			layout.originWidth = max(layout.originWidth, lipgloss.Width("["+item.origin+"]"))
+		}
+		layout.statusWidth = max(layout.statusWidth, lipgloss.Width(item.status))
+	}
+	layout.originWidth = min(layout.originWidth, min(24, max(0, width/4)))
+	layout.statusWidth = min(layout.statusWidth, 18)
+	fixedWidth := 7 // selection indent and "DD · "
+	if layout.originWidth > 0 {
+		fixedWidth += 2 + layout.originWidth
+	}
+	if layout.statusWidth > 0 {
+		fixedWidth += 2 + layout.statusWidth
+	}
+	availableTitleWidth := width - fixedWidth
+	if availableTitleWidth < 12 {
+		return calendarEventLayout{}
+	}
+	layout.titleWidth = min(maxTitleWidth, availableTitleWidth)
+	return layout
+}
+
+func renderEventRow(item event, layout calendarEventLayout, width int, styleStatus bool) string {
+	prefix := fmt.Sprintf("%02d · ", item.date.Day())
+	if layout.titleWidth == 0 {
+		text := item.title
+		if item.origin != "" {
+			text += " [" + item.origin + "]"
+		}
+		suffix := ""
+		if item.status != "" {
+			suffix = " · " + item.status
+		}
+		title := listutil.Truncate(text, max(1, width-2-lipgloss.Width(prefix+suffix)))
+		if styleStatus && item.status != "" {
+			return prefix + title + " · " + theme.Status(item.statusKind, item.status).Render(item.status)
+		}
+		return prefix + title + suffix
+	}
+
+	line := prefix + fitCalendarCell(item.title, layout.titleWidth)
+	if layout.originWidth > 0 {
+		origin := ""
+		if item.origin != "" {
+			origin = "[" + item.origin + "]"
+		}
+		line += "  " + fitCalendarCell(origin, layout.originWidth)
+	}
+	if layout.statusWidth > 0 {
+		status := listutil.Truncate(item.status, layout.statusWidth)
+		if styleStatus && item.status != "" {
+			status = theme.Status(item.statusKind, item.status).Render(status)
+		}
+		line += "  " + status
+	}
+	return strings.TrimRight(line, " ")
+}
+
+func fitCalendarCell(value string, width int) string {
+	value = listutil.Truncate(value, width)
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
 func monthTitle(value time.Time) string {

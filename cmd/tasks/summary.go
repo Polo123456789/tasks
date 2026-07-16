@@ -194,6 +194,7 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 		}
 		bodyBudget := options.maxLines - len(lines) - len(groups) - warningLines
 		quotas := allocateSummaryLines(groups, bodyBudget)
+		layout := summaryTaskGridLayout(groups, quotas, options)
 		for index, group := range groups {
 			lines = append(lines, summaryStyled(fmt.Sprintf("%s · %d", group.label, len(group.tasks)), summaryGroupStyle(group.kind), options.color))
 			quota := quotas[index]
@@ -203,7 +204,7 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 				shown--
 			}
 			for taskIndex := 0; taskIndex < shown; taskIndex++ {
-				line := summaryTaskLine(group.tasks[taskIndex], group.kind, options)
+				line := summaryTaskLine(group.tasks[taskIndex], group.kind, options, layout)
 				lines = append(lines, summaryStyled(line, summaryTaskStyle(group.kind), options.color))
 			}
 			if showRemainder {
@@ -219,6 +220,71 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 		lines[index] = truncateSummaryLine(lines[index], options.width, options.color)
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+type summaryTaskCells struct {
+	title, blocked, priority, subtasks, planning, status string
+}
+
+type summaryGridColumn struct {
+	value func(summaryTaskCells) string
+	width int
+}
+
+type summaryGridLayout struct {
+	titleWidth int
+	columns    []summaryGridColumn
+}
+
+func summaryTaskGridLayout(groups []summaryGroup, quotas []int, options summaryRenderOptions) summaryGridLayout {
+	var rows []summaryTaskCells
+	for index, group := range groups {
+		shown := min(quotas[index], len(group.tasks))
+		if quotas[index] >= 2 && quotas[index] < len(group.tasks) {
+			shown--
+		}
+		for taskIndex := 0; taskIndex < shown; taskIndex++ {
+			rows = append(rows, summaryCells(group.tasks[taskIndex], group.kind, options))
+		}
+	}
+	if len(rows) == 0 {
+		return summaryGridLayout{}
+	}
+
+	candidates := []struct {
+		value func(summaryTaskCells) string
+		cap   int
+	}{
+		{value: func(row summaryTaskCells) string { return row.blocked }, cap: 10},
+		{value: func(row summaryTaskCells) string { return row.priority }, cap: 9},
+		{value: func(row summaryTaskCells) string { return row.subtasks }, cap: 13},
+		{value: func(row summaryTaskCells) string { return row.planning }, cap: 20},
+		{value: func(row summaryTaskCells) string { return row.status }, cap: 18},
+	}
+	layout := summaryGridLayout{}
+	fixedWidth := 4 // indent, marker and the space after it
+	maxTitleWidth := 0
+	for _, row := range rows {
+		maxTitleWidth = max(maxTitleWidth, runewidth.StringWidth(row.title))
+	}
+	for _, candidate := range candidates {
+		columnWidth := 0
+		for _, row := range rows {
+			columnWidth = max(columnWidth, runewidth.StringWidth(candidate.value(row)))
+		}
+		if columnWidth == 0 {
+			continue
+		}
+		columnWidth = min(columnWidth, candidate.cap)
+		layout.columns = append(layout.columns, summaryGridColumn{value: candidate.value, width: columnWidth})
+		fixedWidth += 2 + columnWidth
+	}
+	availableTitleWidth := options.width - fixedWidth
+	if availableTitleWidth < 16 {
+		return summaryGridLayout{}
+	}
+	layout.titleWidth = min(maxTitleWidth, availableTitleWidth)
+	return layout
 }
 
 func allocateSummaryLines(groups []summaryGroup, budget int) []int {
@@ -260,8 +326,26 @@ func summaryHeader(today domain.Date) string {
 	return fmt.Sprintf("tasks · %s %d %s", weekdays[date.Weekday()], date.Day(), months[date.Month()])
 }
 
-func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOptions) string {
+func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOptions, layout summaryGridLayout) string {
 	markers := [...]string{"!", "◆", "▶"}
+	cells := summaryCells(task, kind, options)
+	if layout.titleWidth > 0 {
+		line := "  " + markers[kind] + " " + summaryFit(cells.title, layout.titleWidth)
+		for _, column := range layout.columns {
+			line += "  " + summaryFit(column.value(cells), column.width)
+		}
+		return strings.TrimRight(line, " ")
+	}
+	metadata := []string{cells.blocked, cells.priority, cells.subtasks, cells.planning, cells.status}
+	metadata = compactSummaryCells(metadata)
+	line := fmt.Sprintf("  %s %s", markers[kind], cells.title)
+	if len(metadata) > 0 {
+		line += " · " + strings.Join(metadata, " · ")
+	}
+	return line
+}
+
+func summaryCells(task domain.Task, kind summaryKind, options summaryRenderOptions) summaryTaskCells {
 	title := cleanSummaryText(task.Title)
 	if options.showOrigin && task.Origin.Name != "" {
 		origin := cleanSummaryText(options.originLabels[task.Origin.Identity()])
@@ -269,45 +353,56 @@ func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOp
 			title = "[" + origin + "] " + title
 		}
 	}
-	metadata := make([]string, 0, 5)
+	cells := summaryTaskCells{title: title}
 	if task.Blocked {
-		metadata = append(metadata, "bloqueada")
+		cells.blocked = "bloqueada"
 	}
 	if task.Priority != domain.PriorityNone {
-		metadata = append(metadata, strings.ToLower(task.Priority.String()))
+		cells.priority = strings.ToLower(task.Priority.String())
 	}
 	if task.SubtaskCount > 0 {
-		metadata = append(metadata, fmt.Sprintf("%d/%d subt.", task.SubtaskDoneCount, task.SubtaskCount))
+		cells.subtasks = fmt.Sprintf("%d/%d subt.", task.SubtaskDoneCount, task.SubtaskCount)
 	}
 	if kind == summaryOverdue && task.Due != nil {
-		metadata = append(metadata, "venció "+summaryDate(*task.Due, options.today))
+		cells.planning = "venció " + summaryDate(*task.Due, options.today)
 	} else if task.Recurrence != nil {
-		metadata = append(metadata, "recurrente")
+		cells.planning = "recurrente"
 	} else if kind == summaryActive && task.Start != nil && task.Start.After(options.today) {
 		if task.Due != nil {
-			metadata = append(metadata, summaryDate(*task.Start, options.today)+"–"+summaryDate(*task.Due, options.today))
+			cells.planning = summaryDate(*task.Start, options.today) + "–" + summaryDate(*task.Due, options.today)
 		} else {
-			metadata = append(metadata, "empieza "+summaryDate(*task.Start, options.today))
+			cells.planning = "empieza " + summaryDate(*task.Start, options.today)
 		}
 	} else if task.Due != nil {
 		if task.Due.Equal(options.today) {
-			metadata = append(metadata, "vence hoy")
+			cells.planning = "vence hoy"
 		} else {
-			metadata = append(metadata, "vence "+summaryDate(*task.Due, options.today))
+			cells.planning = "vence " + summaryDate(*task.Due, options.today)
 		}
 	} else if task.Start != nil && !task.Start.Equal(options.today) {
-		metadata = append(metadata, "desde "+summaryDate(*task.Start, options.today))
+		cells.planning = "desde " + summaryDate(*task.Start, options.today)
 	}
 	if kind == summaryActive {
 		if status := cleanSummaryText(task.Status.Name); status != "" {
-			metadata = append(metadata, status)
+			cells.status = status
 		}
 	}
-	line := fmt.Sprintf("  %s %s", markers[kind], title)
-	if len(metadata) > 0 {
-		line += " · " + strings.Join(metadata, " · ")
+	return cells
+}
+
+func compactSummaryCells(values []string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != "" {
+			result = append(result, value)
+		}
 	}
-	return line
+	return result
+}
+
+func summaryFit(value string, width int) string {
+	value = runewidth.Truncate(value, width, "…")
+	return value + strings.Repeat(" ", max(0, width-runewidth.StringWidth(value)))
 }
 
 func summaryOriginLabels(tasks []domain.Task) map[string]string {

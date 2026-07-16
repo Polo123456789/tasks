@@ -215,3 +215,36 @@ func TestSummaryWidthUsesAllAvailableColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestWideSummaryAlignsMetadataColumns(t *testing.T) {
+	today := mustSummaryDate(t, "2026-07-16")
+	status := domain.Status{Name: "Pendiente", Kind: domain.StatusNormal, Initial: true}
+	tasks := []domain.Task{
+		{ID: 1, Title: "Corta", Status: status, Priority: domain.PriorityHigh, Due: &today, SubtaskCount: 4, SubtaskDoneCount: 1},
+		{ID: 2, Title: "Una tarea con un título considerablemente más largo", Status: status, Priority: domain.PriorityUrgent, Due: &today},
+	}
+	rendered := renderSummary(tasks, summaryRenderOptions{today: today, width: 120})
+	var taskLines []string
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "Corta") || strings.Contains(line, "Una tarea") {
+			taskLines = append(taskLines, line)
+		}
+	}
+	if len(taskLines) != 2 {
+		t.Fatalf("task rows=%d, want 2:\n%s", len(taskLines), rendered)
+	}
+	shortLine, longLine := taskLines[0], taskLines[1]
+	if strings.Contains(shortLine, "Una tarea") {
+		shortLine, longLine = longLine, shortLine
+	}
+	if summaryColumn(shortLine, "alta") != summaryColumn(longLine, "urgente") {
+		t.Fatalf("priority columns are not aligned:\n%s\n%s", taskLines[0], taskLines[1])
+	}
+	if summaryColumn(shortLine, "vence hoy") != summaryColumn(longLine, "vence hoy") {
+		t.Fatalf("planning columns are not aligned:\n%s\n%s", taskLines[0], taskLines[1])
+	}
+}
+
+func summaryColumn(line, value string) int {
+	return runewidth.StringWidth(line[:strings.Index(line, value)])
+}

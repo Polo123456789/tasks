@@ -77,6 +77,7 @@ func detailLines(task presenter.Task, selectedSubtask, width, height int) []stri
 		lines = append(lines, theme.Help.Render("Sin subtareas"))
 	} else if height > 1 {
 		capacity := max(1, height-1)
+		statusWidth := subtaskStatusWidth(task.Subtasks, width)
 		taskLimit := capacity
 		start, end := listutil.Bounds(len(task.Subtasks), selectedSubtask, taskLimit)
 		for taskLimit > 1 {
@@ -112,9 +113,18 @@ func detailLines(task presenter.Task, selectedSubtask, width, height int) []stri
 			if index == selectedSubtask {
 				prefix = "› "
 			}
-			status := " [" + subtask.Status + "]"
-			available := max(1, width-len([]rune(prefix+mark+" "+status)))
-			lines = append(lines, prefix+mark+" "+truncate(subtask.Title, available)+status)
+			lead := prefix + mark + " "
+			status := "[" + subtask.Status + "]"
+			gap := 0
+			if statusWidth > 0 {
+				gap = 2
+			}
+			titleWidth := max(1, width-lipgloss.Width(lead)-gap-statusWidth)
+			line := lead + fitCell(subtask.Title, titleWidth)
+			if statusWidth > 0 {
+				line += "  " + fitCell(status, statusWidth)
+			}
+			lines = append(lines, strings.TrimRight(line, " "))
 		}
 		if showBelow {
 			lines = append(lines, fmt.Sprintf("↓ %d más", len(task.Subtasks)-end))
@@ -128,6 +138,19 @@ func detailLines(task presenter.Task, selectedSubtask, width, height int) []stri
 		lines = append(lines, truncate("Depende de "+strings.Join(ids, ", "), width))
 	}
 	return lines[:min(len(lines), height)]
+}
+
+func subtaskStatusWidth(subtasks []presenter.Subtask, width int) int {
+	statusWidth := 0
+	for _, subtask := range subtasks {
+		statusWidth = max(statusWidth, lipgloss.Width("["+subtask.Status+"]"))
+	}
+	return min(statusWidth, max(0, min(width/3, width-8)))
+}
+
+func fitCell(value string, width int) string {
+	value = truncateANSI(value, width)
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
 func markdownLines(markdown string, width, height int) []string {
