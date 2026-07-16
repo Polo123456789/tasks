@@ -735,6 +735,26 @@ func TestCalendarWithoutEventsDoesNotExposeAnInvisibleTask(t *testing.T) {
 	}
 }
 
+func TestChangingTaskViewReloadsFullDetail(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Subtasks: []domain.Subtask{{ID: 2, Title: "child"}}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := New(backend)
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	model.detail = &task
+
+	updated, command := model.Update(key("l"))
+	model = updated.(Model)
+	if command == nil || model.detail != nil {
+		t.Fatalf("view change command=%v detail=%#v", command != nil, model.detail)
+	}
+	updated, _ = model.Update(command())
+	model = updated.(Model)
+	if model.detail == nil || len(model.detail.Subtasks) != 1 {
+		t.Fatalf("full detail was not reloaded: %#v", model.detail)
+	}
+}
+
 func TestGlobalCreationKeysExplainRestriction(t *testing.T) {
 	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
 	model := New(backend)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
+	"github.com/Polo123456789/tasks/internal/projectimport"
 	"path/filepath"
 )
 
@@ -44,6 +45,97 @@ func TestLifecycleAndOptimisticConflict(t *testing.T) {
 	list, e := s.ListTasks(ctx, ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
 	if e != nil || len(list) != 1 {
 		t.Fatal(list, e)
+	}
+}
+
+func TestImportProjectPopulatesCompleteSnapshot(t *testing.T) {
+	s := testStore(t)
+	start, _ := domain.ParseDate("2026-07-20")
+	due, _ := domain.ParseDate("2026-07-22")
+	anchor, _ := domain.ParseDate("2026-07-16")
+	recurrence, _ := domain.ParseRecurrence("weekly:mon,thu")
+	seed := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{
+			{Key: "todo", Name: "Por hacer", Initial: true},
+			{Key: "doing", Name: "En curso"},
+		},
+		Tasks: []projectimport.TaskSeed{
+			{Key: "foundation", StatusKey: projectimport.StatusDone, Task: domain.Task{Title: "Base", Priority: domain.PriorityHigh, Markdown: "# Importada", Start: &start, Due: &due}, Subtasks: []projectimport.SubtaskSeed{{Title: "Preparar", StatusKey: projectimport.StatusDone}}},
+			{Key: "delivery", StatusKey: "todo", Task: domain.Task{Title: "Entrega"}, DependsOn: []string{"foundation"}},
+			{Key: "routine", StatusKey: "doing", Task: domain.Task{Title: "Rutina", Recurrence: &recurrence, RecurrenceAnchor: &anchor}},
+		},
+	}
+	summary, err := s.ImportProject(context.Background(), seed, time.Date(2026, 7, 16, 12, 0, 0, 0, time.FixedZone("local", -6*60*60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary != (projectimport.Summary{Statuses: 2, Tasks: 3, Subtasks: 1, Dependencies: 1}) {
+		t.Fatalf("summary=%#v", summary)
+	}
+	statuses, err := s.Statuses(context.Background())
+	if err != nil || len(statuses) != 4 || statuses[0].Name != "Por hacer" || !statuses[0].Initial || statuses[1].Name != "En curso" {
+		t.Fatalf("statuses=%#v err=%v", statuses, err)
+	}
+	tasks, err := s.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true, Sort: "title"})
+	if err != nil || len(tasks) != 3 {
+		t.Fatalf("tasks=%#v err=%v", tasks, err)
+	}
+	byTitle := make(map[string]domain.Task, len(tasks))
+	for _, task := range tasks {
+		byTitle[task.Title] = task
+	}
+	base, err := s.Task(context.Background(), byTitle["Base"].ID)
+	if err != nil || base.Status.Kind != domain.StatusDone || base.Markdown != "# Importada" || len(base.Subtasks) != 1 || base.Subtasks[0].Status.Kind != domain.StatusDone {
+		t.Fatalf("base=%#v err=%v", base, err)
+	}
+	delivery := byTitle["Entrega"]
+	if delivery.DependencyCount != 1 || delivery.Blocked {
+		t.Fatalf("delivery=%#v", delivery)
+	}
+	routine := byTitle["Rutina"]
+	if routine.Recurrence == nil || routine.Recurrence.Text() != "weekly:mon,thu" || routine.RecurrenceAnchor == nil || routine.RecurrenceAnchor.String() != "2026-07-16" {
+		t.Fatalf("routine=%#v", routine)
+	}
+	history, err := s.History(context.Background(), base.ID)
+	if err != nil || len(history) != 1 || history[0].Kind != "created" || history[0].Detail != "imported" || history[0].CreatedAt.Location() != time.UTC {
+		t.Fatalf("history=%#v err=%v", history, err)
+	}
+}
+
+func TestImportProjectRollsBackEveryTable(t *testing.T) {
+	s := testStore(t)
+	seed := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{{Key: "todo", Name: "Por hacer", Initial: true}},
+		Tasks:    []projectimport.TaskSeed{{Key: "task", StatusKey: "todo", Task: domain.Task{Title: "Tarea"}, DependsOn: []string{"missing"}}},
+	}
+	if _, err := s.ImportProject(context.Background(), seed, time.Now()); err == nil {
+		t.Fatal("expected import failure")
+	}
+	statuses, err := s.Statuses(context.Background())
+	if err != nil || len(statuses) != 5 || statuses[0].Name != "Pendiente" {
+		t.Fatalf("default statuses were not restored: %#v err=%v", statuses, err)
+	}
+	var count int
+	if err = s.db.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("task count=%d err=%v", count, err)
+	}
+}
+
+func TestImportProjectDefensivelyRejectsDependencyCycle(t *testing.T) {
+	s := testStore(t)
+	seed := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{{Key: "todo", Name: "Por hacer", Initial: true}},
+		Tasks: []projectimport.TaskSeed{
+			{Key: "a", StatusKey: "todo", Task: domain.Task{Title: "A"}, DependsOn: []string{"b"}},
+			{Key: "b", StatusKey: "todo", Task: domain.Task{Title: "B"}, DependsOn: []string{"a"}},
+		},
+	}
+	if _, err := s.ImportProject(context.Background(), seed, time.Now()); !errors.Is(err, domain.ErrDependencyCycle) {
+		t.Fatalf("expected dependency cycle, got %v", err)
+	}
+	var count int
+	if err := s.db.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("task count=%d err=%v", count, err)
 	}
 }
 

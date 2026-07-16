@@ -386,6 +386,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inputMode {
 			return m.updateInput(v)
 		}
+		refreshDetail := false
 		switch v.String() {
 		case "q":
 			m.cancelDayWatch()
@@ -396,23 +397,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ensureVisibleSelection()
 			m.selectedSubtask = 0
 			m.detail = nil
+			refreshDetail = true
 		case "left", "h":
 			m.view = m.nextView(-1)
 			m.selected = 0
 			m.ensureVisibleSelection()
 			m.selectedSubtask = 0
 			m.detail = nil
+			refreshDetail = true
 		case "pgup":
 			if m.view == 2 || m.view == 3 {
 				m.calendarMonth = m.calendarMonth.AddDate(0, -1, 0)
 				m.ganttStartDay = 1
 				m.ensureVisibleSelection()
+				m.selectedSubtask = 0
+				m.detail = nil
+				refreshDetail = true
 			}
 		case "pgdown":
 			if m.view == 2 || m.view == 3 {
 				m.calendarMonth = m.calendarMonth.AddDate(0, 1, 0)
 				m.ganttStartDay = 1
 				m.ensureVisibleSelection()
+				m.selectedSubtask = 0
+				m.detail = nil
+				refreshDetail = true
 			}
 		case ",", ".":
 			if m.view == 3 {
@@ -750,6 +759,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return historyLoaded{events: events, err: e}
 				}
 			}
+		}
+		if refreshDetail && m.view != 4 {
+			return m, m.loadDetail()
 		}
 	}
 	if m.view == 4 && m.deleted == nil {
@@ -1323,14 +1335,15 @@ func (m Model) View() string {
 		mainHeight := availableHeight
 		detailHeight := 0
 		if m.hasSelectedTask() {
-			mainHeight = max(3, (availableHeight-1)*2/3)
+			detailHeight = min(10, max(8, availableHeight/4))
+			mainHeight = max(3, availableHeight-detailHeight-1)
 			detailHeight = max(3, availableHeight-mainHeight-1)
 		}
 		switch m.view {
 		case 0:
 			body = kanban.View(m.tasks, m.statuses, m.selected, m.width, mainHeight)
 		case 1:
-			body = table.View(m.tasks, m.selected, m.width, mainHeight)
+			body = table.View(m.tasks, m.selected, m.width, mainHeight, m.backend.Mode() == domain.ModeGlobal)
 		case 2:
 			body = calendar.View(m.tasks, m.calendarMonth, m.selected, m.width, mainHeight)
 		case 3:
@@ -1351,7 +1364,7 @@ func (m Model) View() string {
 					break
 				}
 			}
-			body = lipgloss.JoinVertical(lipgloss.Left, body, "", taskdetail.View(detail, m.selectedSubtask, min(m.width, 80), detailHeight))
+			body = lipgloss.JoinVertical(lipgloss.Left, body, "", taskdetail.View(detail, m.selectedSubtask, m.width, detailHeight))
 		}
 		if m.historyOpen {
 			body = historyscreen.View(m.history, availableHeight)

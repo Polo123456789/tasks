@@ -7,15 +7,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/Polo123456789/tasks/internal/tui/screens/listutil"
 	"github.com/Polo123456789/tasks/internal/tui/theme"
 )
 
 type event struct {
-	date      time.Time
-	text      string
-	taskIndex int
+	date       time.Time
+	text       string
+	status     string
+	statusKind domain.StatusKind
+	taskIndex  int
 }
 
 func View(tasks []presenter.Task, month time.Time, selected, width, height int) string {
@@ -50,7 +53,7 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 				}
 				label += " [" + project + "]"
 			}
-			events = append(events, event{date: date, text: label, taskIndex: taskIndex})
+			events = append(events, event{date: date, text: label, status: task.Status, statusKind: task.StatusKind, taskIndex: taskIndex})
 		}
 	}
 	lines := []string{theme.Title.Render(monthTitle(month))}
@@ -108,10 +111,19 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 		}
 		for index := start; index < end; index++ {
 			item := events[index]
-			line := fmt.Sprintf("%02d · %s", item.date.Day(), item.text)
+			prefix := fmt.Sprintf("%02d · ", item.date.Day())
+			suffix := ""
+			if item.status != "" {
+				suffix = " · " + item.status
+			}
+			title := listutil.Truncate(item.text, max(1, width-2-len([]rune(prefix+suffix))))
+			line := prefix + title + suffix
 			if item.taskIndex == selected {
 				line = theme.Selected.Render("› " + line)
 			} else {
+				if item.status != "" {
+					line = prefix + title + " · " + theme.Status(item.statusKind, item.status).Render(item.status)
+				}
 				line = "  " + line
 			}
 			lines = append(lines, line)

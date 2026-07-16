@@ -22,6 +22,74 @@ tasks init mi-proyecto.tasks
 
 `tasks` busca el archivo `.tasks` desde el directorio actual hacia sus padres. Fuera de un proyecto abre el modo global con todos los proyectos registrados. El índice global solo guarda rutas; cada mutación se escribe en el archivo de origen.
 
+## Ayuda de línea de comandos
+
+La ayuda global está disponible mediante cualquiera de estas formas:
+
+```sh
+tasks help
+tasks -h
+tasks --help
+```
+
+Ejecutar `tasks` sin argumentos continúa abriendo la TUI. Los comandos y opciones desconocidos terminan con error y sugieren ejecutar `tasks help`; nunca se interpretan como una solicitud para abrir la interfaz. La ayuda es global y no admite un nombre de subcomando.
+
+## Importar un proyecto desde una conversación con IA
+
+`tasks` no se conecta a ningún servicio externo. En su lugar, genera un prompt autocontenido para usarlo con el agente con el que se discutió el proyecto:
+
+```sh
+tasks ai-prompt
+```
+
+El agente debe responder únicamente con JSON puro. Guarde esa respuesta en un archivo o pásela por la entrada estándar:
+
+```sh
+tasks import mi-proyecto.tasks resultado.json
+tasks import mi-proyecto.tasks - < resultado.json
+cat resultado.json | tasks import mi-proyecto.tasks
+```
+
+La importación crea un proyecto nuevo, lo registra, imprime un resumen y termina sin abrir la TUI. Nunca sobrescribe un archivo ni mezcla contenido con un proyecto existente; si cualquier validación falla, no deja un `.tasks` parcial.
+
+El formato actual es `tasks-project` versión 1:
+
+```json
+{
+  "format": "tasks-project",
+  "version": 1,
+  "statuses": [
+    {"key": "pending", "name": "Pendiente", "initial": true},
+    {"key": "in_progress", "name": "En progreso"}
+  ],
+  "tasks": [
+    {
+      "key": "scope",
+      "title": "Definir alcance",
+      "status": "done",
+      "priority": "high",
+      "markdown": "Decisiones relevantes del proyecto."
+    },
+    {
+      "key": "implementation",
+      "title": "Implementar primera versión",
+      "status": "pending",
+      "start": "2026-07-20",
+      "due": "2026-07-25",
+      "subtasks": [{"title": "Implementar parser"}],
+      "depends_on": ["scope"]
+    }
+  ]
+}
+```
+
+- `statuses` declara estados normales en el orden del Kanban y exactamente uno debe ser inicial. `done` y `cancelled` son claves reservadas para los estados especiales.
+- Las claves de tareas y estados solo existen en el intercambio; SQLite asigna sus IDs internos.
+- La prioridad admite `none`, `low`, `medium`, `high` y `urgent`.
+- `start` y `due` usan `YYYY-MM-DD`. `recurrence` usa la sintaxis compacta documentada abajo y no puede combinarse con fechas.
+- Las subtareas admiten solo título y estado. `depends_on` referencia claves de otras tareas y no admite ciclos.
+- Los campos omitidos usan el estado inicial, prioridad `none`, Markdown vacío o listas vacías según corresponda. Se rechazan campos desconocidos y texto fuera del objeto JSON.
+
 ## Navegación
 
 - La cabecera indica siempre si se está en modo local o global y, en local, el proyecto abierto.

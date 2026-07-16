@@ -11,6 +11,7 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 5. **El contexto siempre está presente.** La cabecera identifica modo local/global y proyecto. Las acciones prohibidas en global explican la restricción.
 6. **Ayuda contextual completa.** El pie enumera todas las acciones disponibles en el contexto actual, agrupadas por navegación, tarea, relaciones, subtarea y filtros. Cambia al entrar en Papelera, Estados, historial, formularios, confirmaciones o selectores. `F1` conserva un mapa general opcional, pero ninguna operación debe exigir consultarlo. Cada formulario muestra formato, ejemplo y cómo confirmar o cancelar.
 7. **Lenguaje de usuario.** Meses, recurrencias, eventos de historial y errores de interacción se presentan en español. La sintaxis compacta queda como detalle documentado, no como punto de entrada principal.
+8. **Color como refuerzo.** Tabla, Calendario y Gantt comparten una paleta estable por estado: finalizadas en verde, canceladas en tono apagado y estados normales personalizados en colores diferenciados por nombre. El nombre, símbolo o leyenda permanece visible; ninguna distinción depende únicamente del color y el resaltado de selección tiene prioridad de contraste.
 
 ## Mapa de interacción
 
@@ -37,11 +38,11 @@ Los selectores usan `↑`/`↓`, `Enter` y `Esc`. Una lista vacía lo indica exp
 ## Vistas y viewport
 
 - **Kanban:** muestra tantas columnas como caben. `←` y `→` dentro del título de una columna indican columnas fuera de pantalla; al mover una tarea, su columna permanece en la ventana. Cada columna pagina sus tareas alrededor de la selección.
-- **Tabla:** cada tarea ocupa una línea adaptable. Los campos se expresan como segmentos y se truncan con elipsis al ancho disponible.
-- **Calendario:** `↑`/`↓` solo recorre tareas con eventos en el mes y resalta sus entradas.
-- **Gantt:** `↑`/`↓` solo recorre tareas visibles en el mes. `,`/`.` desplaza la ventana siete días; la cabecera muestra el rango actual.
+- **Tabla:** cada tarea ocupa una fila con columnas alineadas para ID, título, estado, prioridad, planificación, progreso de subtareas y bloqueo. La celda de estado usa la paleta compartida y el indicador de bloqueo conserva el color de peligro. En modo global, el proyecto usa una columna propia cuando cabe y acompaña al título en terminales estrechas. La columna del título absorbe el ancho restante y trunca con elipsis.
+- **Calendario:** `↑`/`↓` solo recorre tareas con eventos en el mes y resalta sus entradas. Cada evento conserva el nombre textual del estado y lo colorea cuando no es la selección activa.
+- **Gantt:** `↑`/`↓` solo recorre tareas visibles en el mes. `,`/`.` desplaza la ventana siete días; la cabecera muestra el rango actual. Las celdas de día crecen para aprovechar el ancho disponible y, cuando el espacio es estrecho, la escala etiqueta intervalos de cinco días sin perder una celda por fecha. Las dependencias se resumen en la misma fila para no reducir innecesariamente el número de tareas visibles. Las barras usan el color del estado y una leyenda textual coloreada explica la correspondencia.
 - **Papelera y Estados:** la fila que recibirá `u`, `e`, `i` o `d` siempre está resaltada.
-- **Detalle y subtareas:** el ID de tarea es visible y la lista de subtareas mantiene la selección dentro de su ventana.
+- **Detalle y subtareas:** el ID de tarea es visible y la lista de subtareas mantiene la selección dentro de su ventana. El panel ocupa todo el ancho; distribuye subtareas y un avance breve de Markdown en columnas y nunca excede el alto que le asigna el modelo.
 
 Después de una mutación que cambie el orden —por ejemplo, prioridad, título o estado— la selección se conserva por identidad `(proyecto, ID)`, no por posición. Así el foco no salta silenciosamente a otra tarea durante la recarga.
 

@@ -12,7 +12,7 @@ func TestTasksBuildsViewSummaryAndProjectIdentity(t *testing.T) {
 	due, _ := domain.ParseDate("2026-07-15")
 	input := domain.Task{
 		ID: 4, Project: "/workspace/backend.tasks", Title: "Task",
-		Status: domain.Status{Name: "En progreso"}, Priority: domain.PriorityHigh,
+		Status: domain.Status{Name: "En progreso", Kind: domain.StatusNormal}, Priority: domain.PriorityHigh,
 		Start: &start, Due: &due, Markdown: "# Documentation", Blocked: true,
 		Recurrence: &domain.Recurrence{Kind: domain.Daily}, SubtaskDoneCount: 2,
 		SubtaskCount: 3, DependencyCount: 4, Version: 7,
@@ -23,6 +23,9 @@ func TestTasksBuildsViewSummaryAndProjectIdentity(t *testing.T) {
 	}
 	if got.SubtasksDone != 2 || got.SubtasksTotal != 3 || got.Dependencies != 4 || got.Markdown != input.Markdown {
 		t.Fatalf("summary: %#v", got)
+	}
+	if got.StatusKind != domain.StatusNormal {
+		t.Fatalf("status kind=%q", got.StatusKind)
 	}
 	badge := Badge(got)
 	if !strings.Contains(badge, "🔒") || !strings.Contains(badge, "↻") {

@@ -36,6 +36,14 @@ Nombre visible: `backend`.
 
 La ruta también se mostrará cuando sea necesario distinguir proyectos con el mismo nombre.
 
+### 2.3 Ayuda y despacho de comandos
+
+La ayuda global se muestra con `tasks help`, `tasks -h` o `tasks --help`. Las tres formas imprimen el mismo contenido en stdout, no inicializan configuración ni proyectos y terminan correctamente.
+
+`tasks` sin argumentos conserva el arranque de la TUI. Cualquier comando u opción no reconocidos, incluso después de un comando válido, terminan con error y sugieren ejecutar `tasks help`; nunca continúan hacia la detección de modo. El único argumento que comienza con guion permitido fuera de la ayuda global es `-` como origen stdin de `tasks import`.
+
+La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `import` y `help`. No existe ayuda específica por subcomando en esta versión. Los comandos conocidos con una cantidad incorrecta de argumentos muestran su sintaxis y la misma sugerencia de ayuda.
+
 ## 3. Creación de proyectos
 
 ```bash
@@ -53,6 +61,31 @@ El comando:
 - Abre la aplicación en modo local.
 
 El archivo será una base de datos SQLite autocontenida y portable.
+
+### 3.1 Importación asistida por IA
+
+La aplicación ofrece dos comandos locales y no se conecta directamente a ningún agente ni servicio externo:
+
+```bash
+tasks ai-prompt
+tasks import nombre.tasks [resultado.json|-]
+```
+
+`tasks ai-prompt` imprime un prompt con la fecha actual, el contrato de intercambio y un ejemplo. Puede ejecutarse desde cualquier directorio sin abrir el registro global ni una TUI.
+
+`tasks import`:
+
+- Lee JSON puro desde el archivo indicado o desde stdin si se omite el origen o se usa `-`.
+- Exige un nombre nuevo con extensión `.tasks` y las mismas restricciones de directorio que `init`.
+- Valida el documento completo antes de publicar el proyecto.
+- Construye estados, tareas, subtareas y dependencias en una única transacción.
+- Publica el archivo completo sin sobrescribir destinos existentes y después lo registra globalmente.
+- Ante cualquier error elimina los datos temporales y no deja un proyecto parcial.
+- Imprime cantidades importadas y termina sin abrir la TUI.
+
+El contrato inicial usa `format: "tasks-project"` y `version: 1`. Los estados y tareas tienen claves portables que se resuelven a IDs internos durante la importación. Los estados especiales se referencian mediante `done` y `cancelled`. Se admiten todos los datos funcionales del modelo: estados normales, prioridad, Markdown, fechas, recurrencia, subtareas y dependencias. No se importan IDs, versiones, timestamps, papelera, historial previo ni valores derivados.
+
+El decoder rechaza campos desconocidos, texto o bloques Markdown alrededor del JSON, versiones no soportadas, claves y relaciones duplicadas, referencias inexistentes, ciclos, fechas o recurrencias inválidas y cualquier incumplimiento de las reglas del dominio. Las recurrencias quedan ancladas al día de importación. Las reglas de propagación entre tareas principales y subtareas se aplican antes de persistir el resultado.
 
 ## 4. Modo local
 
@@ -434,3 +467,4 @@ El historial pertenece a la tarea y no podrá editarse manualmente.
 - Creación de elementos desde el modo global.
 - Notificaciones del sistema.
 - Kanban global.
+- Mezcla o reimportación sobre un proyecto existente.

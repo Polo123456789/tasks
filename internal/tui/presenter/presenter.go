@@ -9,6 +9,7 @@ import (
 type Task struct {
 	ID                                              int64
 	Source, Project, Title, Status, Priority, Dates string
+	StatusKind                                      domain.StatusKind
 	Start, Due                                      string
 	DeletedAt                                       string
 	Markdown                                        string
@@ -64,7 +65,7 @@ func Tasks(in []domain.Task) []Task {
 		}
 		out = append(out, Task{
 			ID: v.ID, Source: v.Project, Project: project, Title: v.Title,
-			Status: v.Status.Name, Priority: v.Priority.String(), Dates: dates,
+			Status: v.Status.Name, StatusKind: v.Status.Kind, Priority: v.Priority.String(), Dates: dates,
 			Markdown: v.Markdown, Blocked: v.Blocked, Recurring: v.Recurrence != nil,
 			SubtasksDone: done, SubtasksTotal: total, Dependencies: dependencies,
 			Subtasks: subtasks, DependencyIDs: append([]int64(nil), v.DependencyIDs...),

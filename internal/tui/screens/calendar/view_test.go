@@ -45,3 +45,11 @@ func TestViewDisambiguatesSameNamedProjects(t *testing.T) {
 		t.Fatalf("projects not disambiguated:\n%s", view)
 	}
 }
+
+func TestViewKeepsStatusTextAlongsideColor(t *testing.T) {
+	tasks := []presenter.Task{{Title: "Task", Due: "2026-07-10", Status: "En progreso"}}
+	view := View(tasks, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), -1, 90, 20)
+	if !strings.Contains(view, "Task · En progreso") {
+		t.Fatalf("calendar event lacks textual status:\n%s", view)
+	}
+}

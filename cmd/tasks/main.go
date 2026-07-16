@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,6 +17,7 @@ import (
 	"github.com/Polo123456789/tasks/internal/application"
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
+	"github.com/Polo123456789/tasks/internal/projectimport"
 	tui "github.com/Polo123456789/tasks/internal/tui/app"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -215,7 +216,23 @@ func main() {
 	}
 }
 func run() error {
-	flag.Parse()
+	return runArgs(os.Args[1:], os.Stdin, os.Stdout)
+}
+
+func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
+	invocation, e := parseInvocation(args)
+	if e != nil {
+		return e
+	}
+	if invocation.kind == commandHelp {
+		_, e = io.WriteString(stdout, helpText)
+		return e
+	}
+	systemClock := clock.System{}
+	if invocation.kind == commandAIPrompt {
+		_, e := io.WriteString(stdout, projectimport.Prompt(systemClock.Today()))
+		return e
+	}
 	cwd, e := os.Getwd()
 	if e != nil {
 		return e
@@ -235,11 +252,16 @@ func run() error {
 	}
 	defer reg.Close()
 	var project string
-	if flag.NArg() > 0 && flag.Arg(0) == "init" {
-		if flag.NArg() != 2 {
-			return fmt.Errorf("usage: tasks init nombre.tasks")
+	if invocation.kind == commandImport {
+		summary, importedPath, importErr := importProject(context.Background(), cwd, invocation.project, invocation.source, stdin, reg, systemClock)
+		if importErr != nil {
+			return importErr
 		}
-		name := flag.Arg(1)
+		_, e = fmt.Fprintf(stdout, "Proyecto importado: %s (%d estados, %d tareas, %d subtareas, %d dependencias)\n", importedPath, summary.Statuses, summary.Tasks, summary.Subtasks, summary.Dependencies)
+		return e
+	}
+	if invocation.kind == commandInit {
+		name := invocation.project
 		if e = filesystem.ValidateProjectName(name); e != nil {
 			return e
 		}
@@ -294,6 +316,76 @@ func run() error {
 	model := tui.New(backend{svc: svc, path: project})
 	_, e = tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return e
+}
+
+func importProject(ctx context.Context, cwd, name, source string, stdin io.Reader, reg ports.Registry, importClock ports.Clock) (projectimport.Summary, string, error) {
+	if e := filesystem.ValidateProjectName(name); e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	var reader io.Reader = stdin
+	var input *os.File
+	if source != "" && source != "-" {
+		var e error
+		input, e = os.Open(source)
+		if e != nil {
+			return projectimport.Summary{}, "", e
+		}
+		defer input.Close()
+		reader = input
+	}
+	document, e := projectimport.Decode(reader)
+	if e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	seed, e := projectimport.Normalize(document, importClock.Today())
+	if e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	if existing, directoryErr := filesystem.InDirectory(cwd); directoryErr != nil {
+		return projectimport.Summary{}, "", directoryErr
+	} else if len(existing) != 0 {
+		return projectimport.Summary{}, "", fmt.Errorf("directory already contains project %s", existing[0])
+	}
+	target := filepath.Join(cwd, name)
+	if _, e = os.Lstat(target); !errors.Is(e, os.ErrNotExist) {
+		return projectimport.Summary{}, "", fmt.Errorf("%s already exists", target)
+	}
+
+	temporary, e := os.CreateTemp(cwd, ".tasks-import-")
+	if e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if e = temporary.Chmod(0600); e == nil {
+		e = temporary.Close()
+	} else {
+		_ = temporary.Close()
+	}
+	if e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	store, e := db.Open(temporaryPath)
+	if e != nil {
+		return projectimport.Summary{}, "", e
+	}
+	summary, importErr := store.ImportProject(ctx, seed, importClock.Now())
+	closeErr := store.Close()
+	if importErr != nil || closeErr != nil {
+		return projectimport.Summary{}, "", errors.Join(importErr, closeErr)
+	}
+	if e = os.Link(temporaryPath, target); e != nil {
+		return projectimport.Summary{}, "", fmt.Errorf("publish project: %w", e)
+	}
+	if e = os.Remove(temporaryPath); e != nil {
+		_ = os.Remove(target)
+		return projectimport.Summary{}, "", fmt.Errorf("remove import staging file: %w", e)
+	}
+	if e = reg.Register(ctx, target); e != nil {
+		_ = os.Remove(target)
+		return projectimport.Summary{}, "", e
+	}
+	return summary, target, nil
 }
 
 func createProject(path string) (*db.Store, error) {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Polo123456789/tasks/internal/adapters/registry"
 	db "github.com/Polo123456789/tasks/internal/adapters/sqlite"
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
@@ -125,17 +127,23 @@ func terminatePTY(terminal *os.File, command *exec.Cmd) {
 	_ = terminal.Close()
 }
 
-func TestE2EInitCreateCloseAndReopen(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skip("initial release supports Linux and macOS")
-	}
-	root := t.TempDir()
+func buildBinary(t *testing.T, root string) string {
+	t.Helper()
 	binary := filepath.Join(root, "tasks")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
+	return binary
+}
+
+func TestE2EInitCreateCloseAndReopen(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("initial release supports Linux and macOS")
+	}
+	root := t.TempDir()
+	binary := buildBinary(t, root)
 	projectDir := filepath.Join(root, "project")
 	home := filepath.Join(root, "home")
 	if err := os.MkdirAll(projectDir, 0700); err != nil {
@@ -211,4 +219,80 @@ func TestE2EInitCreateCloseAndReopen(t *testing.T) {
 	terminal, command, output = runPTY(t, binary, projectDir, home)
 	waitForText(t, output, "E2E task")
 	stopPTY(t, terminal, command, output)
+}
+
+func TestE2EImportCommandCreatesRegisteredProjectAndExits(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("initial release supports Linux and macOS")
+	}
+	root := t.TempDir()
+	binary := buildBinary(t, root)
+	projectDir := filepath.Join(root, "project")
+	home := filepath.Join(root, "home")
+	config := filepath.Join(home, "config")
+	if err := os.MkdirAll(projectDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var globalHelp []byte
+	for _, argument := range []string{"help", "-h", "--help"} {
+		help := exec.Command(binary, argument)
+		help.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+		helpOutput, helpErr := help.CombinedOutput()
+		if helpErr != nil || !strings.Contains(string(helpOutput), "tasks — gestor local") {
+			t.Fatalf("%s err=%v output=%s", argument, helpErr, helpOutput)
+		}
+		if globalHelp == nil {
+			globalHelp = helpOutput
+		} else if !bytes.Equal(globalHelp, helpOutput) {
+			t.Fatalf("%s output differs from global help", argument)
+		}
+	}
+	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("help created configuration: %v", err)
+	}
+	unknown := exec.Command(binary, "unknown")
+	unknown.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	unknownOutput, unknownErr := unknown.CombinedOutput()
+	var exitError *exec.ExitError
+	if !errors.As(unknownErr, &exitError) || exitError.ExitCode() != 1 || !strings.Contains(string(unknownOutput), `comando desconocido "unknown"`) || !strings.Contains(string(unknownOutput), `Use "tasks help"`) {
+		t.Fatalf("unknown err=%v output=%s", unknownErr, unknownOutput)
+	}
+	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unknown command created configuration: %v", err)
+	}
+	prompt := exec.Command(binary, "ai-prompt")
+	prompt.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	promptOutput, err := prompt.CombinedOutput()
+	if err != nil || !strings.Contains(string(promptOutput), `"tasks-project"`) || !strings.Contains(string(promptOutput), "JSON puro") {
+		t.Fatalf("ai-prompt err=%v output=%s", err, promptOutput)
+	}
+
+	input := `{"format":"tasks-project","version":1,"statuses":[{"key":"todo","name":"Pendiente","initial":true}],"tasks":[{"key":"plan","title":"Plan importado","priority":"urgent"}]}`
+	command := exec.Command(binary, "import", "imported.tasks", "-")
+	command.Dir = projectDir
+	command.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	command.Stdin = strings.NewReader(input)
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "1 estados, 1 tareas, 0 subtareas, 0 dependencias") {
+		t.Fatalf("import err=%v output=%s", err, output)
+	}
+	projectPath := filepath.Join(projectDir, "imported.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr := store.Close()
+	if err != nil || closeErr != nil || len(tasks) != 1 || tasks[0].Title != "Plan importado" || tasks[0].Priority != domain.PriorityUrgent {
+		t.Fatalf("tasks=%#v err=%v close=%v", tasks, err, closeErr)
+	}
+	index, err := registry.Open(filepath.Join(config, "tasks", "registry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := index.Projects(context.Background())
+	closeErr = index.Close()
+	if err != nil || closeErr != nil || len(paths) != 1 || paths[0] != projectPath {
+		t.Fatalf("registry paths=%v err=%v close=%v", paths, err, closeErr)
+	}
 }
