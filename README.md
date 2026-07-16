@@ -25,7 +25,7 @@ tasks init mi-proyecto.tasks
 ## Navegación
 
 - La cabecera indica siempre si se está en modo local o global y, en local, el proyecto abierto.
-- `F1`: abrir la ayuda completa y contextual; `↑`/`↓` desplazan la ayuda.
+- El pie muestra siempre todas las teclas válidas en el contexto actual y cambia con la vista, selección, formulario, selector o confirmación. `F1` abre además un mapa general opcional; `↑`/`↓` desplazan esa ayuda.
 - `←`/`→` o `h`/`l`: cambiar vista; `↑`/`↓` o `j`/`k`: seleccionar un elemento visible.
 - `PgUp` / `PgDn`: periodo anterior/siguiente en Calendario y Gantt.
 - `,` / `.`: desplazar la ventana de días del Gantt cuando el mes no cabe completo.
@@ -44,6 +44,8 @@ tasks init mi-proyecto.tasks
 Las operaciones que relacionan elementos no requieren memorizar IDs: dependencias, filtro local por estado y destino al eliminar un estado presentan selectores con ID, título y estado. Los IDs permanecen visibles en Tabla, detalle y Estados para diagnóstico.
 
 En modo global, una acción de creación muestra una explicación en lugar de fallar silenciosamente. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
+
+La terminal mínima soportada es de 90 columnas por 40 filas (`90x40`). El cuerpo reserva dinámicamente el espacio ocupado por el pie contextual multilínea.
 
 El editor Markdown se resuelve primero mediante `$VISUAL` y después `$EDITOR`.
 

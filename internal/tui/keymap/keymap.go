@@ -2,27 +2,80 @@ package keymap
 
 import "strings"
 
-// Short keeps the persistent footer intentionally compact. The complete map
-// lives behind F1 so it remains reachable in an 80-column terminal.
-func Short(view int, global bool) string {
-	switch view {
-	case 0:
-		return "n nueva · e título · [/] estado · f fin · C cancelar · z reabrir · F1 ayuda · q"
-	case 1:
-		return "e título · f fin · C cancelar · z reabrir · / buscar · F1 ayuda · q"
-	case 2, 3:
-		period := "PgUp/PgDn mes · "
-		if view == 3 {
-			period += ",/. días · "
-		}
-		return period + "↑/↓ tarea · e editar · F1 ayuda · q salir"
+// Context describes the actions that are valid in the UI state currently on
+// screen. Footer deliberately contains the complete contextual map: F1 remains
+// useful as a reference, but is not required to discover an available action.
+type Context struct {
+	View          int
+	Global        bool
+	HasTask       bool
+	HasSubtask    bool
+	HasDependency bool
+	NormalStatus  bool
+	Recurring     bool
+}
+
+// Footer returns one logical group per line. The app wraps these lines to the
+// terminal width and reserves their rendered height before drawing the body.
+func Footer(context Context) string {
+	lines := []string{"ACCIONES"}
+	switch context.View {
 	case 4:
-		return "↑/↓ seleccionar · u restaurar · F1 ayuda · q salir"
+		lines = append(lines, "Navegar    ←/→ cambiar vista · ↑/↓ seleccionar · r recargar · q salir")
+		if context.HasTask {
+			lines = append(lines, "Papelera   u restaurar la tarea seleccionada")
+		}
 	case 5:
-		return "a crear · e renombrar · i inicial · [/] ordenar · d eliminar · F1 ayuda · q salir"
+		lines = append(lines, "Navegar    ←/→ cambiar vista · ↑/↓ seleccionar · r recargar · q salir")
+		lines = append(lines, "Estados    a crear estado")
+		if context.NormalStatus {
+			lines = append(lines, "Seleccionado e renombrar · i hacer inicial · [/] reordenar · d eliminar y elegir destino")
+		}
 	default:
-		return "F1 ayuda · ←/→ vista · ↑/↓ seleccionar · q salir"
+		navigation := "Navegar    ←/→ cambiar vista · ↑/↓ seleccionar tarea"
+		if context.View == 2 || context.View == 3 {
+			navigation += " · PgUp/PgDn cambiar mes"
+		}
+		if context.View == 3 {
+			navigation += " · ,/. desplazar 7 días"
+		}
+		lines = append(lines, navigation+" · r recargar · q salir")
+		if !context.Global {
+			lines = append(lines, "Crear      n nueva tarea")
+		}
+		if context.HasTask {
+			lines = append(lines,
+				"Tarea      e título · p prioridad · [/] estado · f finalizar · C cancelar · z reabrir",
+				"Contenido  s inicio · v vencimiento · m Markdown · d papelera · H historial",
+			)
+			if !context.Global || context.Recurring {
+				lines[len(lines)-1] += " · c recurrencia"
+			}
+			if !context.Global {
+				relations := "Relaciones a añadir subtarea · g agregar dependencia"
+				if context.HasDependency {
+					relations += " · G quitar dependencia"
+				}
+				lines = append(lines, relations)
+			} else if context.HasDependency {
+				lines = append(lines, "Relaciones G quitar dependencia")
+			}
+			if context.HasSubtask {
+				lines = append(lines, "Subtarea   J/K seleccionar · E renombrar · t completar/reabrir · {/} cambiar estado")
+			}
+		}
+		filters := "Búsqueda   / título · ? Markdown"
+		if context.Global {
+			filters += " · P proyecto"
+		}
+		lines = append(lines,
+			filters+" · S estado · D fechas",
+			"Filtros    1 prioridad · B bloqueadas · R recurrentes · o ordenar · 0 limpiar",
+			"Visibilidad F mostrar/ocultar finalizadas · X mostrar/ocultar canceladas",
+		)
 	}
+	lines = append(lines, "Ayuda      F1 mapa general (opcional)")
+	return strings.Join(lines, "\n")
 }
 
 func Full(global bool) string {

@@ -480,11 +480,10 @@ Se dividirán en:
 
 Tamaños mínimos de prueba:
 
-- Terminal muy pequeña, para comprobar degradación segura.
-- `80x24`.
+- `90x40`, terminal mínima soportada.
 - `120x40`.
 - Pantalla ancha.
-- Redimensionamientos sucesivos durante una interacción.
+- Redimensionamientos sucesivos durante una interacción, sin bajar de `90x40`.
 
 Los golden tests no sustituirán las aserciones de estado. Su actualización requerirá una acción explícita para evitar aceptar regresiones visuales accidentalmente.
 
@@ -536,7 +535,7 @@ En la rama principal o antes de publicar:
 
 ## 7. Proceso específico para cambios de UI
 
-Cada cambio deberá conservar el contrato de interacción descrito en `docs/ui-ux.md`: contexto visible, ayuda progresiva, selección perceptible, operaciones sin IDs manuales y viewport seguro para terminales pequeñas.
+Cada cambio deberá conservar el contrato de interacción descrito en `docs/ui-ux.md`: contexto visible, pie contextual completo sin depender de `F1`, selección perceptible, operaciones sin IDs manuales y viewport seguro desde `90x40`.
 
 Cada pantalla seguirá este flujo:
 

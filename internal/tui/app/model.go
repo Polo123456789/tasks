@@ -358,6 +358,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePicker(v)
 		}
 		if m.historyOpen {
+			if v.String() == "q" {
+				m.cancelDayWatch()
+				return m, tea.Quit
+			}
 			if v.String() == "H" || v.String() == "esc" {
 				m.historyOpen = false
 				m.history = nil
@@ -956,7 +960,7 @@ func (m Model) updatePicker(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) pickerView() string {
+func (m Model) pickerView(height int) string {
 	title := "Seleccionar"
 	switch m.pickerAction {
 	case "add-dependency":
@@ -983,7 +987,7 @@ func (m Model) pickerView() string {
 	if len(m.pickerOptions) == 0 {
 		lines = append(lines, "No hay opciones disponibles.")
 	} else {
-		start, end := listutil.Bounds(len(m.pickerOptions), m.pickerSelected, max(1, m.height-9))
+		start, end := listutil.Bounds(len(m.pickerOptions), m.pickerSelected, max(1, height-8))
 		if start > 0 {
 			lines = append(lines, fmt.Sprintf("↑ %d opción(es) más", start))
 		}
@@ -1007,11 +1011,6 @@ func (m Model) pickerView() string {
 			lines = append(lines, fmt.Sprintf("↓ %d opción(es) más", len(m.pickerOptions)-end))
 		}
 	}
-	instructions := "↑/↓ seleccionar · Enter confirmar · Esc cancelar"
-	if m.pickerAction == "recurrence-weekly-days" {
-		instructions = "↑/↓ seleccionar · Espacio marcar · Enter confirmar · Esc cancelar"
-	}
-	lines = append(lines, "", instructions)
 	return theme.Border.Render(strings.Join(lines, "\n"))
 }
 
@@ -1304,6 +1303,9 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "Cargando…"
 	}
+	footerLines := wrapLines(strings.Split(m.footerContent(), "\n"), max(20, m.width))
+	footer := strings.Join(footerLines, "\n")
+	availableHeight := max(4, m.height-3-len(footerLines))
 	header := theme.Title.Render("tasks") + "  " + theme.Help.Render(m.backend.ContextLabel()) + "  " + []string{"Kanban", "Tabla", "Calendario", "Gantt", "Papelera", "Estados"}[m.view]
 	if summary := m.filterSummary(); summary != "" {
 		header += "  " + theme.Help.Render(summary)
@@ -1318,7 +1320,6 @@ func (m Model) View() string {
 		}
 		body = theme.Help.Foreground(theme.Danger).Render(message)
 	} else {
-		availableHeight := max(4, m.height-4)
 		mainHeight := availableHeight
 		detailHeight := 0
 		if m.hasSelectedTask() {
@@ -1356,54 +1357,83 @@ func (m Model) View() string {
 			body = historyscreen.View(m.history, availableHeight)
 		}
 	}
-	footer := keymap.Short(m.view, m.backend.Mode() == domain.ModeGlobal)
+	if m.helpOpen {
+		body = theme.Border.Render(m.helpView(availableHeight))
+	} else if m.pickerOpen {
+		body = m.pickerView(availableHeight)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", theme.Help.Render(footer))
+}
+
+func (m Model) footerContent() string {
+	if m.helpOpen {
+		return "AYUDA     ↑/↓ línea · PgUp/PgDn página · F1 o Esc cerrar · q salir"
+	}
+	if m.pickerOpen {
+		keys := "SELECTOR  ↑/↓ elegir · Enter confirmar · Esc cancelar"
+		if m.pickerAction == "recurrence-weekly-days" {
+			keys = "SELECTOR  ↑/↓ elegir · Espacio marcar/desmarcar · Enter confirmar · Esc cancelar"
+		}
+		return keys + " · F1 ayuda general"
+	}
+	if m.historyOpen {
+		return "HISTORIAL H o Esc cerrar · q salir · F1 ayuda general"
+	}
 	if m.confirmTrash != nil {
 		labels := make([]string, 0, len(m.confirmAffected))
 		for _, task := range m.confirmAffected {
 			labels = append(labels, fmt.Sprintf("#%d %s", task.ID, task.Title))
 		}
-		footer = fmt.Sprintf("Advertencia: se eliminarán dependencias con %s. ¿Continuar? (y/n)", strings.Join(labels, ", "))
-	} else if m.inputMode {
-		label := "Nueva tarea"
-		if m.inputAction == "edit" {
-			label = "Editar título"
-		} else if m.inputAction == "add-subtask" {
-			label = "Nueva subtarea"
-		} else if m.inputAction == "rename-subtask" {
-			label = "Editar subtarea"
-		} else if m.inputAction == "recurrence-monthly" {
-			label = "Día del mes (1–31)"
-		} else if m.inputAction == "start" {
-			label = "Fecha de inicio (AAAA-MM-DD, vacío elimina)"
-		} else if m.inputAction == "due" {
-			label = "Vencimiento (AAAA-MM-DD, vacío elimina)"
-		} else if m.inputAction == "filter-title" {
-			label = "Buscar en título (vacío limpia)"
-		} else if m.inputAction == "filter-markdown" {
-			label = "Buscar explícitamente en Markdown (vacío limpia)"
-		} else if m.inputAction == "filter-project" {
-			label = "Proyecto por nombre o ruta (vacío limpia)"
-		} else if m.inputAction == "filter-status-name" {
-			label = "Nombre exacto del estado (vacío limpia)"
-		} else if m.inputAction == "filter-dates" {
-			label = "Rango AAAA-MM-DD..AAAA-MM-DD (extremos opcionales)"
-		} else if m.inputAction == "create-status" {
-			label = "Nombre del nuevo estado"
-		} else if m.inputAction == "rename-status" {
-			label = "Nuevo nombre del estado"
-		}
-		footer = fmt.Sprintf("%s: %s█  (enter guardar, esc cancelar)", label, m.input)
-	} else if m.notice != "" {
-		footer = m.notice + " · F1 ayuda · q"
+		return fmt.Sprintf("CONFIRMAR  Se eliminarán dependencias con %s\ny/Enter confirmar · n/Esc cancelar · F1 ayuda general", strings.Join(labels, ", "))
 	}
-	if m.helpOpen {
-		body = theme.Border.Render(m.helpView())
-		footer = "↑/↓ desplazar ayuda · F1 o Esc cerrar"
-	} else if m.pickerOpen {
-		body = m.pickerView()
-		footer = "Selector activo"
+	if m.inputMode {
+		return fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", theme.Help.Render(footer))
+
+	context := keymap.Context{
+		View:       m.view,
+		Global:     m.backend.Mode() == domain.ModeGlobal,
+		HasTask:    m.hasSelectedTask(),
+		HasSubtask: m.detail != nil && len(m.detail.Subtasks) > 0,
+	}
+	if context.HasTask {
+		context.Recurring = m.tasks[m.selected].Recurring
+		context.HasDependency = m.tasks[m.selected].Dependencies > 0
+	}
+	if m.view == 4 {
+		context.HasTask = m.selected >= 0 && m.selected < len(m.deleted)
+	}
+	if m.view == 5 && m.selected >= 0 && m.selected < len(m.statuses) {
+		context.NormalStatus = m.statuses[m.selected].Kind == domain.StatusNormal
+	}
+	footer := keymap.Footer(context)
+	if m.notice != "" {
+		footer = "AVISO      " + m.notice + "\n" + footer
+	}
+	return footer
+}
+
+func (m Model) inputLabel() string {
+	labels := map[string]string{
+		"create":             "Nueva tarea",
+		"edit":               "Editar título",
+		"add-subtask":        "Nueva subtarea",
+		"rename-subtask":     "Editar subtarea",
+		"recurrence-monthly": "Día del mes (1–31; ejemplo: 15)",
+		"start":              "Fecha de inicio (AAAA-MM-DD; vacío elimina)",
+		"due":                "Vencimiento (AAAA-MM-DD; vacío elimina)",
+		"filter-title":       "Buscar en título (vacío limpia)",
+		"filter-markdown":    "Buscar en Markdown (vacío limpia)",
+		"filter-project":     "Proyecto por nombre o ruta (vacío limpia)",
+		"filter-status-name": "Nombre exacto del estado (vacío limpia)",
+		"filter-dates":       "Rango AAAA-MM-DD..AAAA-MM-DD (extremos opcionales)",
+		"create-status":      "Nombre del nuevo estado",
+		"rename-status":      "Nuevo nombre del estado",
+	}
+	if label, ok := labels[m.inputAction]; ok {
+		return label
+	}
+	return "Valor"
 }
 
 func friendlyError(err error) string {
@@ -1429,10 +1459,10 @@ func friendlyError(err error) string {
 	return replacer.Replace(message)
 }
 
-func (m Model) helpView() string {
+func (m Model) helpView(height int) string {
 	lines := strings.Split(keymap.Full(m.backend.Mode() == domain.ModeGlobal), "\n")
 	lines = wrapLines(lines, max(20, m.width-4))
-	limit := max(1, m.height-7)
+	limit := max(1, height-2)
 	maxStart := max(0, len(lines)-limit)
 	start := min(m.helpScroll, maxStart)
 	end := min(len(lines), start+limit)

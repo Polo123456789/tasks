@@ -610,7 +610,7 @@ func TestLifecycleActionsAndVisibilityFiltersUseDistinctKeys(t *testing.T) {
 func TestHelpAndContextAreVisibleAtSmallTerminal(t *testing.T) {
 	backend := &fakeBackend{mode: domain.ModeLocal}
 	model := New(backend)
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
 	model = updated.(Model)
 	updated, _ = model.Update(key("f1"))
 	model = updated.(Model)
@@ -618,6 +618,96 @@ func TestHelpAndContextAreVisibleAtSmallTerminal(t *testing.T) {
 	for _, expected := range []string{"Local · prueba", "AYUDA DE TASKS", "F1 o Esc"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("missing %q in help:\n%s", expected, view)
+		}
+	}
+}
+
+func TestContextualFooterExposesEveryTaskActionAtMinimumSize(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Version: 1, Recurrence: &domain.Recurrence{Kind: domain.Daily}, DependencyIDs: []int64{2}}
+	task.Subtasks = []domain.Subtask{{ID: 11, Title: "subtask"}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := New(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(detailLoaded{task: task})
+	model = updated.(Model)
+	model.notice = "Cambio guardado"
+
+	view := model.View()
+	for _, expected := range []string{
+		"←/→ cambiar vista", "n nueva tarea", "e título", "p prioridad", "[/] estado",
+		"f finalizar", "C cancelar", "z reabrir", "s inicio", "v vencimiento", "m Markdown",
+		"c recurrencia", "d papelera", "H historial", "a añadir subtarea", "g agregar dependencia",
+		"G quitar dependencia", "J/K seleccionar", "E renombrar", "t completar/reabrir",
+		"{/} cambiar estado", "/ título", "? Markdown", "S estado", "D fechas", "1 prioridad",
+		"B bloqueadas", "R recurrentes", "F mostrar/ocultar finalizadas", "X mostrar/ocultar",
+		"o ordenar", "0 limpiar", "r recargar", "q salir",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("missing contextual action %q:\n%s", expected, view)
+		}
+	}
+	if lines := strings.Count(view, "\n") + 1; lines > 40 {
+		t.Fatalf("rendered %d lines in the supported 90x40 terminal:\n%s", lines, view)
+	}
+}
+
+func TestContextualFooterChangesForTransientModesAndKeepsNotices(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
+	model := New(backend)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+
+	model.notice = "Operación terminada"
+	view := model.View()
+	for _, expected := range []string{"AVISO", "Operación terminada", "ACCIONES", "n nueva tarea"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("notice replaced contextual help; missing %q:\n%s", expected, view)
+		}
+	}
+
+	model.inputMode = true
+	model.inputAction = "start"
+	view = model.View()
+	for _, expected := range []string{"FORMULARIO", "AAAA-MM-DD", "Enter guardar o aplicar", "Esc cancelar"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("input footer missing %q:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "ACCIONES") {
+		t.Fatalf("normal footer remained visible during input:\n%s", view)
+	}
+
+	model.inputMode = false
+	model.openPicker("recurrence-weekly-days", model.tasks[0], weekdayPickerOptions())
+	view = model.View()
+	for _, expected := range []string{"SELECTOR", "Espacio marcar/desmarcar", "Enter confirmar", "Esc cancelar"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("picker footer missing %q:\n%s", expected, view)
+		}
+	}
+}
+
+func TestContextualFooterOnlyShowsActionsAvailableInGlobalMode(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task", DependencyCount: 1}}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	view := model.View()
+	for _, unavailable := range []string{"n nueva tarea", "a añadir subtarea", "g agregar dependencia", "c recurrencia"} {
+		if strings.Contains(view, unavailable) {
+			t.Fatalf("global footer exposes unavailable action %q:\n%s", unavailable, view)
+		}
+	}
+	for _, available := range []string{"P proyecto", "G quitar dependencia", "e título", "F mostrar/ocultar finalizadas", "X mostrar/ocultar"} {
+		if !strings.Contains(view, available) {
+			t.Fatalf("global footer missing %q:\n%s", available, view)
 		}
 	}
 }
@@ -684,7 +774,7 @@ func TestRecurrenceStartsWithGuidedPicker(t *testing.T) {
 	}
 }
 
-func TestCrowdedKanbanFitsEightyByTwentyFour(t *testing.T) {
+func TestCrowdedKanbanFitsMinimumNinetyByForty(t *testing.T) {
 	statuses := []domain.Status{{ID: 1, Name: "Pending", Kind: domain.StatusNormal}, {ID: 2, Name: "Progress", Kind: domain.StatusNormal}, {ID: 3, Name: "Blocked", Kind: domain.StatusNormal}, {ID: 4, Name: "Cancelled", Kind: domain.StatusCancelled}, {ID: 5, Name: "Done", Kind: domain.StatusDone}}
 	tasks := make([]domain.Task, 40)
 	for index := range tasks {
@@ -692,12 +782,12 @@ func TestCrowdedKanbanFitsEightyByTwentyFour(t *testing.T) {
 	}
 	backend := &fakeBackend{mode: domain.ModeLocal, tasks: tasks}
 	model := New(backend)
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
 	model = updated.(Model)
 	updated, _ = model.Update(loaded{tasks: tasks, statuses: statuses})
 	model = updated.(Model)
-	if lines := strings.Count(model.View(), "\n") + 1; lines > 24 {
-		t.Fatalf("rendered %d lines in 24-row terminal:\n%s", lines, model.View())
+	if lines := strings.Count(model.View(), "\n") + 1; lines > 40 {
+		t.Fatalf("rendered %d lines in supported 90x40 terminal:\n%s", lines, model.View())
 	}
 }
 

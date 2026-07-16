@@ -9,7 +9,7 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 3. **Toda selección es visible.** Si `↑`/`↓` cambia el elemento sobre el que actuará una tecla, ese elemento debe quedar resaltado.
 4. **El tamaño de terminal no oculta datos sin salida.** Las listas usan ventanas centradas en la selección y marcadores `↑`/`↓`. Kanban pagina columnas y Gantt permite desplazar días.
 5. **El contexto siempre está presente.** La cabecera identifica modo local/global y proyecto. Las acciones prohibidas en global explican la restricción.
-6. **Ayuda progresiva.** El pie contiene solo las acciones principales de la vista. `F1` abre el mapa completo, desplazable en terminales pequeñas. Cada formulario muestra formato, ejemplo y cómo confirmar o cancelar.
+6. **Ayuda contextual completa.** El pie enumera todas las acciones disponibles en el contexto actual, agrupadas por navegación, tarea, relaciones, subtarea y filtros. Cambia al entrar en Papelera, Estados, historial, formularios, confirmaciones o selectores. `F1` conserva un mapa general opcional, pero ninguna operación debe exigir consultarlo. Cada formulario muestra formato, ejemplo y cómo confirmar o cancelar.
 7. **Lenguaje de usuario.** Meses, recurrencias, eventos de historial y errores de interacción se presentan en español. La sintaxis compacta queda como detalle documentado, no como punto de entrada principal.
 
 ## Mapa de interacción
@@ -47,9 +47,11 @@ Después de una mutación que cambie el orden —por ejemplo, prioridad, título
 
 ## Terminales pequeñas
 
-El modelo reserva espacio para cabecera, cuerpo, detalle y pie. Cada pantalla recibe el alto disponible y limita su contenido. Los indicadores `↑ N más` y `↓ N más` hacen explícito que existe contenido fuera de la ventana. La ayuda y los selectores también tienen viewport propio.
+El modelo reserva espacio para cabecera, cuerpo, detalle y el pie contextual multilínea. El pie se compone primero y su altura renderizada se descuenta del cuerpo, incluso cuando una línea debe ajustarse al ancho. Cada pantalla recibe el alto restante y limita su contenido. Los indicadores `↑ N más` y `↓ N más` hacen explícito que existe contenido fuera de la ventana. La ayuda y los selectores también tienen viewport propio.
 
-El objetivo mínimo de revisión es `80x24`; también se prueba degradación segura por debajo de ese tamaño. El pie debe conservar al menos `F1 ayuda` y `q` dentro de 80 columnas.
+La terminal mínima soportada es de **90 columnas por 40 filas** (`90x40`). En ese tamaño el pie debe mostrar el mapa contextual completo sin ocultar el cuerpo ni depender de `F1`. Los tamaños inferiores quedan fuera del contrato de soporte.
+
+Un aviso no reemplaza el mapa de acciones: ocupa una línea propia sobre él. El pie normal omite acciones que no aplican —por ejemplo, crear en modo global— y las incorpora cuando aparece una selección operable. Los modos transitorios sustituyen temporalmente el mapa normal por todas las teclas válidas para completar, cancelar o cerrar esa interacción.
 
 ## Mensajes y restricciones
 
@@ -64,7 +66,7 @@ Para cada cambio de UI se revisan, como mínimo:
 
 - local y global;
 - vacío, normal, saturado, error y conflicto;
-- `80x24`, `120x40` y un tamaño estrecho;
+- `90x40`, `120x40` y una pantalla ancha;
 - selección al inicio, medio y final de listas largas;
-- `F1`, selectores, confirmaciones y formularios;
+- pie normal completo, `F1`, avisos, historial, selectores, confirmaciones y formularios;
 - que ninguna acción se aplique a una selección invisible.

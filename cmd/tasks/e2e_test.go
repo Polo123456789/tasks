@@ -165,7 +165,7 @@ func TestE2EInitCreateCloseAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForText(t, output, "Nueva subtarea")
-	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 24, Cols: 80}); err != nil {
+	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 40, Cols: 90}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := terminal.Write([]byte("Child task\r")); err != nil {
