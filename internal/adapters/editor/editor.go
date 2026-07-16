@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,13 +49,23 @@ func (s *Session) Run() error            { return s.cmd.Run() }
 func (s *Session) SetStdin(r io.Reader)  { s.cmd.Stdin = r }
 func (s *Session) SetStdout(w io.Writer) { s.cmd.Stdout = w }
 func (s *Session) SetStderr(w io.Writer) { s.cmd.Stderr = w }
-func (s *Session) Finish(runErr error) (string, error) {
-	defer os.Remove(s.filename)
-	if runErr != nil {
-		return "", fmt.Errorf("editor: %w", runErr)
+func (s *Session) Path() string          { return s.filename }
+func (s *Session) Read() (string, error) {
+	b, err := os.ReadFile(s.filename)
+	return string(b), err
+}
+func (s *Session) Cleanup() error {
+	if err := os.Remove(s.filename); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	b, e := os.ReadFile(s.filename)
-	return string(b), e
+	return nil
+}
+func (s *Session) Finish(runErr error) (string, error) {
+	if runErr != nil {
+		return "", errors.Join(fmt.Errorf("editor: %w", runErr), s.Cleanup())
+	}
+	content, readErr := s.Read()
+	return content, errors.Join(readErr, s.Cleanup())
 }
 
 func Edit(ctx context.Context, content string) (string, error) {

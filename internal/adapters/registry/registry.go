@@ -3,6 +3,8 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
@@ -18,7 +20,8 @@ func Open(path string) (*SQLite, error) {
 	if e != nil {
 		return nil, e
 	}
-	if _, e = db.Exec("PRAGMA journal_mode=DELETE; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS projects(path TEXT PRIMARY KEY NOT NULL)"); e != nil {
+	db.SetMaxOpenConns(1)
+	if _, e = db.Exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS projects(path TEXT PRIMARY KEY NOT NULL)"); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -59,12 +62,16 @@ func (r *SQLite) Prune(ctx context.Context) ([]string, error) {
 	}
 	var live []string
 	for _, p := range paths {
-		if st, e := os.Stat(p); e == nil && !st.IsDir() {
+		st, statErr := os.Stat(p)
+		if statErr == nil && !st.IsDir() {
 			live = append(live, p)
-		} else {
-			if _, e = r.db.ExecContext(ctx, "DELETE FROM projects WHERE path=?", p); e != nil {
-				return nil, e
-			}
+			continue
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("check registered project %q: %w", p, statErr)
+		}
+		if _, e = r.db.ExecContext(ctx, "DELETE FROM projects WHERE path=?", p); e != nil {
+			return nil, e
 		}
 	}
 	return live, nil

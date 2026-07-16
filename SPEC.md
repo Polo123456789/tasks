@@ -81,6 +81,7 @@ tasks import nombre.tasks [resultado.json|-]
 - Construye estados, tareas, subtareas y dependencias en una única transacción.
 - Publica el archivo completo sin sobrescribir destinos existentes y después lo registra globalmente.
 - Ante cualquier error elimina los datos temporales y no deja un proyecto parcial.
+- Una falla posterior a la publicación, por ejemplo al actualizar el registro global, conserva el `.tasks` completo e informa su ruta; nunca destruye datos ya importados correctamente.
 - Imprime cantidades importadas y termina sin abrir la TUI.
 
 El contrato inicial usa `format: "tasks-project"` y `version: 1`. Los estados y tareas tienen claves portables que se resuelven a IDs internos durante la importación. Los estados especiales se referencian mediante `done` y `cancelled`. Se admiten todos los datos funcionales del modelo: estados normales, prioridad, Markdown, fechas, recurrencia, subtareas y dependencias. No se importan IDs, versiones, timestamps, papelera, historial previo ni valores derivados.
@@ -340,7 +341,8 @@ Para editar:
 1. Se genera un archivo temporal.
 2. Se abre el editor.
 3. Al cerrarse correctamente, el contenido se guarda en la base.
-4. El archivo temporal se elimina.
+4. El archivo temporal se elimina después de confirmar la escritura.
+5. Si un conflicto concurrente impide guardar, el temporal se conserva y se informa su ruta para recuperar las ediciones.
 
 ## 14. Papelera
 

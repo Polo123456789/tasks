@@ -7,11 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Polo123456789/tasks/internal/adapters/editor"
 	db "github.com/Polo123456789/tasks/internal/adapters/sqlite"
+	"github.com/Polo123456789/tasks/internal/application"
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
 )
@@ -72,6 +75,53 @@ func TestConfigureLoggingWritesOnlyToRequestedFile(t *testing.T) {
 	}
 	if info.Mode().Perm()&0077 != 0 {
 		t.Fatalf("log permissions=%o", info.Mode().Perm())
+	}
+}
+
+func TestMarkdownConflictPreservesEditedTemporaryFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is for supported Unix platforms")
+	}
+	directory := t.TempDir()
+	projectPath := filepath.Join(directory, "project.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &application.Service{Mode: domain.ModeLocal, Clock: fixedClock{now: time.Now()}, Projects: []application.Project{{Path: projectPath, Store: store}}}
+	defer service.Close()
+	task, err := service.CreateTask(context.Background(), projectPath, domain.Task{Title: "original", Markdown: "before"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(directory, "editor")
+	if err = os.WriteFile(script, []byte("#!/bin/sh\nprintf 'edited content' > \"$1\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VISUAL", script)
+	command, finish, err := (backend{svc: service, path: projectPath}).MarkdownEditor(context.Background(), projectPath, task.ID, task.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, ok := command.(*editor.Session)
+	if !ok {
+		t.Fatalf("editor command type %T", command)
+	}
+	if err = command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.UpdateTaskTitle(context.Background(), projectPath, task.ID, task.Version, "concurrent"); err != nil {
+		t.Fatal(err)
+	}
+	if err = finish(nil); !errors.Is(err, domain.ErrConflict) || !strings.Contains(err.Error(), session.Path()) {
+		t.Fatalf("conflict did not expose recovery path: %v", err)
+	}
+	content, err := os.ReadFile(session.Path())
+	if err != nil || string(content) != "edited content" {
+		t.Fatalf("preserved content=%q err=%v", content, err)
+	}
+	if err = session.Cleanup(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -163,23 +213,37 @@ func TestImportProjectReadsFileAndRejectsExistingProject(t *testing.T) {
 	}
 }
 
-func TestImportFailureLeavesNoProjectOrStagingFile(t *testing.T) {
-	for name, registryError := range map[string]error{"invalid-json": nil, "registry": errors.New("registry failed")} {
-		t.Run(name, func(t *testing.T) {
-			directory := t.TempDir()
-			input := importJSON
-			if name == "invalid-json" {
-				input = "```json\n" + importJSON + "\n```"
-			}
-			registry := &recordingRegistry{err: registryError}
-			clock := fixedClock{now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
-			if _, _, err := importProject(context.Background(), directory, "failed.tasks", "-", strings.NewReader(input), registry, clock); err == nil {
-				t.Fatal("expected import error")
-			}
-			entries, err := os.ReadDir(directory)
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("entries=%v err=%v", entries, err)
-			}
-		})
+func TestImportValidationFailureLeavesNoProjectOrStagingFile(t *testing.T) {
+	directory := t.TempDir()
+	clock := fixedClock{now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
+	input := "```json\n" + importJSON + "\n```"
+	if _, _, err := importProject(context.Background(), directory, "failed.tasks", "-", strings.NewReader(input), &recordingRegistry{}, clock); err == nil {
+		t.Fatal("expected import error")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+}
+
+func TestImportKeepsCompleteProjectWhenRegistrationFails(t *testing.T) {
+	directory := t.TempDir()
+	registry := &recordingRegistry{err: errors.New("registry failed")}
+	clock := fixedClock{now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
+	summary, path, err := importProject(context.Background(), directory, "recoverable.tasks", "-", strings.NewReader(importJSON), registry, clock)
+	if err == nil || !strings.Contains(err.Error(), "project imported at") || summary.Tasks != 2 {
+		t.Fatalf("summary=%#v path=%q err=%v", summary, path, err)
+	}
+	if path != filepath.Join(directory, "recoverable.tasks") {
+		t.Fatalf("path=%q", path)
+	}
+	store, openErr := db.Open(path)
+	if openErr != nil {
+		t.Fatalf("published project is not recoverable: %v", openErr)
+	}
+	defer store.Close()
+	tasks, listErr := store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	if listErr != nil || len(tasks) != 2 {
+		t.Fatalf("published tasks=%#v err=%v", tasks, listErr)
 	}
 }

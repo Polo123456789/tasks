@@ -91,41 +91,41 @@ func (b backend) History(c context.Context, path string, taskID int64) ([]domain
 	}
 	return b.svc.History(c, path, taskID)
 }
-func (b backend) AddSubtask(c context.Context, path string, taskID int64, title string) (domain.Subtask, error) {
+func (b backend) AddSubtask(c context.Context, path string, taskID, version int64, title string) (domain.Subtask, error) {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.AddSubtask(c, path, taskID, title)
+	return b.svc.AddSubtask(c, path, taskID, version, title)
 }
-func (b backend) RenameSubtask(c context.Context, path string, id int64, title string) (domain.Subtask, error) {
+func (b backend) RenameSubtask(c context.Context, path string, taskID, id, version int64, title string) (domain.Subtask, error) {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.RenameSubtask(c, path, id, title)
+	return b.svc.RenameSubtask(c, path, taskID, id, version, title)
 }
-func (b backend) ToggleSubtask(c context.Context, path string, taskID, subtaskID int64) error {
+func (b backend) ToggleSubtask(c context.Context, path string, taskID, subtaskID, version int64) error {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.ToggleSubtask(c, path, taskID, subtaskID)
+	return b.svc.ToggleSubtask(c, path, taskID, subtaskID, version)
 }
-func (b backend) MoveSubtaskStatus(c context.Context, path string, taskID, subtaskID int64, direction int) error {
+func (b backend) MoveSubtaskStatus(c context.Context, path string, taskID, subtaskID, version int64, direction int) error {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.MoveSubtaskStatus(c, path, taskID, subtaskID, direction)
+	return b.svc.MoveSubtaskStatus(c, path, taskID, subtaskID, version, direction)
 }
-func (b backend) AddDependency(c context.Context, path string, taskID, dependsOn int64) error {
+func (b backend) AddDependency(c context.Context, path string, taskID, dependsOn, version int64) error {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.AddDependency(c, path, taskID, dependsOn)
+	return b.svc.AddDependency(c, path, taskID, dependsOn, version)
 }
-func (b backend) RemoveDependency(c context.Context, path string, taskID, dependsOn int64) error {
+func (b backend) RemoveDependency(c context.Context, path string, taskID, dependsOn, version int64) error {
 	if path == "" {
 		path = b.path
 	}
-	return b.svc.RemoveDependency(c, path, taskID, dependsOn)
+	return b.svc.RemoveDependency(c, path, taskID, dependsOn, version)
 }
 func (b backend) DependencyCandidates(c context.Context, path string, taskID int64, existingOnly bool) ([]domain.Task, error) {
 	if path == "" {
@@ -170,12 +170,21 @@ func (b backend) MarkdownEditor(c context.Context, path string, id, version int6
 		return nil, nil, e
 	}
 	finish := func(runErr error) error {
-		content, finishErr := session.Finish(runErr)
-		if finishErr != nil {
+		if runErr != nil {
+			_, finishErr := session.Finish(runErr)
 			return finishErr
 		}
-		_, finishErr = b.svc.UpdateTaskMarkdown(context.Background(), path, id, version, content)
-		return finishErr
+		content, readErr := session.Read()
+		if readErr != nil {
+			return fmt.Errorf("read editor output; temporary file preserved at %s: %w", session.Path(), readErr)
+		}
+		if _, updateErr := b.svc.UpdateTaskMarkdown(context.Background(), path, id, version, content); updateErr != nil {
+			return fmt.Errorf("save markdown; edits preserved at %s: %w", session.Path(), updateErr)
+		}
+		if cleanupErr := session.Cleanup(); cleanupErr != nil {
+			return fmt.Errorf("markdown saved, but remove temporary file %s: %w", session.Path(), cleanupErr)
+		}
+		return nil
 	}
 	return session, finish, nil
 }
@@ -219,7 +228,7 @@ func run() error {
 	return runArgs(os.Args[1:], os.Stdin, os.Stdout)
 }
 
-func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
+func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error) {
 	invocation, e := parseInvocation(args)
 	if e != nil {
 		return e
@@ -245,12 +254,12 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
 	if e != nil {
 		return e
 	}
-	defer logFile.Close()
+	defer func() { resultErr = errors.Join(resultErr, logFile.Close()) }()
 	reg, e := registry.Open(filepath.Join(data, "tasks", "registry.sqlite"))
 	if e != nil {
 		return e
 	}
-	defer reg.Close()
+	defer func() { resultErr = errors.Join(resultErr, reg.Close()) }()
 	var project string
 	if invocation.kind == commandImport {
 		summary, importedPath, importErr := importProject(context.Background(), cwd, invocation.project, invocation.source, stdin, reg, systemClock)
@@ -278,7 +287,9 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
 		if e != nil {
 			return e
 		}
-		store.Close()
+		if e = store.Close(); e != nil {
+			return e
+		}
 	} else {
 		project, e = filesystem.Discover(cwd)
 		if e != nil {
@@ -293,8 +304,7 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
 			return e
 		}
 		if e = reg.Register(context.Background(), project); e != nil {
-			store.Close()
-			return e
+			return errors.Join(e, store.Close())
 		}
 		projects = []application.Project{{Path: project, Name: application.ProjectName(project), Store: store}}
 	} else {
@@ -309,7 +319,7 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 	svc := &application.Service{Mode: mode, Projects: projects, Clock: clock.System{}}
-	defer svc.Close()
+	defer func() { resultErr = errors.Join(resultErr, svc.Close()) }()
 	if e = svc.Maintain(context.Background()); e != nil {
 		slog.Warn("maintenance", "error", e)
 	}
@@ -377,13 +387,17 @@ func importProject(ctx context.Context, cwd, name, source string, stdin io.Reade
 	if e = os.Link(temporaryPath, target); e != nil {
 		return projectimport.Summary{}, "", fmt.Errorf("publish project: %w", e)
 	}
-	if e = os.Remove(temporaryPath); e != nil {
-		_ = os.Remove(target)
-		return projectimport.Summary{}, "", fmt.Errorf("remove import staging file: %w", e)
-	}
-	if e = reg.Register(ctx, target); e != nil {
-		_ = os.Remove(target)
-		return projectimport.Summary{}, "", e
+	cleanupErr := os.Remove(temporaryPath)
+	registerErr := reg.Register(ctx, target)
+	if cleanupErr != nil || registerErr != nil {
+		var publicationErrs []error
+		if cleanupErr != nil {
+			publicationErrs = append(publicationErrs, fmt.Errorf("project imported at %s, but staging cleanup failed: %w", target, cleanupErr))
+		}
+		if registerErr != nil {
+			publicationErrs = append(publicationErrs, fmt.Errorf("project imported at %s, but global registration failed: %w", target, registerErr))
+		}
+		return summary, target, errors.Join(publicationErrs...)
 	}
 	return summary, target, nil
 }
@@ -397,15 +411,20 @@ func createProject(path string) (*db.Store, error) {
 		return nil, e
 	}
 	if e = file.Close(); e != nil {
-		os.Remove(path)
-		return nil, e
+		return nil, errors.Join(e, removeFile(path))
 	}
 	store, e := db.Open(path)
 	if e != nil {
-		os.Remove(path)
-		return nil, e
+		return nil, errors.Join(e, removeFile(path))
 	}
 	return store, nil
+}
+
+func removeFile(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s after failure: %w", path, err)
+	}
+	return nil
 }
 
 func configureLogging(path string) (*os.File, error) {

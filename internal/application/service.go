@@ -390,7 +390,7 @@ func (s *Service) updateTask(ctx context.Context, path string, id, version int64
 	change(&task)
 	return p.Store.UpdateTask(ctx, task)
 }
-func (s *Service) AddSubtask(ctx context.Context, path string, taskID int64, title string) (domain.Subtask, error) {
+func (s *Service) AddSubtask(ctx context.Context, path string, taskID, version int64, title string) (domain.Subtask, error) {
 	if !s.Capabilities().CanCreateTask {
 		return domain.Subtask{}, domain.ErrForbidden
 	}
@@ -402,9 +402,9 @@ func (s *Service) AddSubtask(ctx context.Context, path string, taskID int64, tit
 	m := v.(*sync.Mutex)
 	m.Lock()
 	defer m.Unlock()
-	return p.Store.AddSubtask(ctx, taskID, title)
+	return p.Store.AddSubtask(ctx, taskID, version, title)
 }
-func (s *Service) RenameSubtask(ctx context.Context, path string, id int64, title string) (domain.Subtask, error) {
+func (s *Service) RenameSubtask(ctx context.Context, path string, taskID, id, version int64, title string) (domain.Subtask, error) {
 	p, e := s.project(path)
 	if e != nil {
 		return domain.Subtask{}, e
@@ -413,16 +413,16 @@ func (s *Service) RenameSubtask(ctx context.Context, path string, id int64, titl
 	m := v.(*sync.Mutex)
 	m.Lock()
 	defer m.Unlock()
-	return p.Store.RenameSubtask(ctx, id, title)
+	return p.Store.RenameSubtask(ctx, taskID, id, version, title)
 }
-func (s *Service) SetSubtaskStatus(ctx context.Context, path string, id, statusID int64) error {
+func (s *Service) SetSubtaskStatus(ctx context.Context, path string, taskID, id, statusID, version int64) error {
 	p, e := s.project(path)
 	if e != nil {
 		return e
 	}
-	return s.serialError(path, func() error { return p.Store.SetSubtaskStatus(ctx, id, statusID) })
+	return s.serialError(path, func() error { return p.Store.SetSubtaskStatus(ctx, taskID, id, statusID, version) })
 }
-func (s *Service) ToggleSubtask(ctx context.Context, path string, taskID, subtaskID int64) error {
+func (s *Service) ToggleSubtask(ctx context.Context, path string, taskID, subtaskID, version int64) error {
 	p, e := s.project(path)
 	if e != nil {
 		return e
@@ -462,10 +462,10 @@ func (s *Service) ToggleSubtask(ctx context.Context, path string, taskID, subtas
 		if target == 0 {
 			return domain.ErrNotFound
 		}
-		return p.Store.SetSubtaskStatus(ctx, subtaskID, target)
+		return p.Store.SetSubtaskStatus(ctx, taskID, subtaskID, target, version)
 	})
 }
-func (s *Service) MoveSubtaskStatus(ctx context.Context, path string, taskID, subtaskID int64, direction int) error {
+func (s *Service) MoveSubtaskStatus(ctx context.Context, path string, taskID, subtaskID, version int64, direction int) error {
 	if direction != -1 && direction != 1 {
 		return domain.ValidationError{Field: "direction", Message: "must be -1 or 1"}
 	}
@@ -503,10 +503,10 @@ func (s *Service) MoveSubtaskStatus(ctx context.Context, path string, taskID, su
 		if current < 0 || target < 0 || target >= len(statuses) {
 			return nil
 		}
-		return p.Store.SetSubtaskStatus(ctx, subtaskID, statuses[target].ID)
+		return p.Store.SetSubtaskStatus(ctx, taskID, subtaskID, statuses[target].ID, version)
 	})
 }
-func (s *Service) AddDependency(ctx context.Context, path string, taskID, dependsOn int64) error {
+func (s *Service) AddDependency(ctx context.Context, path string, taskID, dependsOn, version int64) error {
 	if !s.Capabilities().CanCreateDependency {
 		return domain.ErrForbidden
 	}
@@ -514,14 +514,14 @@ func (s *Service) AddDependency(ctx context.Context, path string, taskID, depend
 	if e != nil {
 		return e
 	}
-	return s.serialError(path, func() error { return p.Store.AddDependency(ctx, taskID, dependsOn) })
+	return s.serialError(path, func() error { return p.Store.AddDependency(ctx, taskID, dependsOn, version) })
 }
-func (s *Service) RemoveDependency(ctx context.Context, path string, taskID, dependsOn int64) error {
+func (s *Service) RemoveDependency(ctx context.Context, path string, taskID, dependsOn, version int64) error {
 	p, e := s.project(path)
 	if e != nil {
 		return e
 	}
-	return s.serialError(path, func() error { return p.Store.RemoveDependency(ctx, taskID, dependsOn) })
+	return s.serialError(path, func() error { return p.Store.RemoveDependency(ctx, taskID, dependsOn, version) })
 }
 
 // DependencyCandidates returns complete project-local choices for the TUI.

@@ -45,3 +45,26 @@ func TestRegisterUsesCanonicalUniquePathsAndPruneRemovesMissing(t *testing.T) {
 		t.Fatalf("stale registry paths: %v", paths)
 	}
 }
+
+func TestPruneKeepsEntryWhenFilesystemCheckFailsTransiently(t *testing.T) {
+	root := t.TempDir()
+	registry, err := Open(filepath.Join(root, "registry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+	loop := filepath.Join(root, "loop.tasks")
+	if err = os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = registry.db.Exec("INSERT INTO projects(path) VALUES(?)", loop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = registry.Prune(context.Background()); err == nil {
+		t.Fatal("expected the filesystem error to be reported")
+	}
+	paths, err := registry.Projects(context.Background())
+	if err != nil || !reflect.DeepEqual(paths, []string{loop}) {
+		t.Fatalf("transient failure removed registry entry: paths=%v err=%v", paths, err)
+	}
+}

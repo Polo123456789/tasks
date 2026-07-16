@@ -50,7 +50,7 @@ tasks import mi-proyecto.tasks - < resultado.json
 cat resultado.json | tasks import mi-proyecto.tasks
 ```
 
-La importación crea un proyecto nuevo, lo registra, imprime un resumen y termina sin abrir la TUI. Nunca sobrescribe un archivo ni mezcla contenido con un proyecto existente; si cualquier validación falla, no deja un `.tasks` parcial.
+La importación crea un proyecto nuevo, lo registra, imprime un resumen y termina sin abrir la TUI. Nunca sobrescribe un archivo ni mezcla contenido con un proyecto existente; si cualquier validación falla, no deja un `.tasks` parcial. Si el archivo completo ya fue publicado y solo falla el registro global, se conserva y el error indica su ruta para no perder una importación recibida por `stdin`.
 
 El formato actual es `tasks-project` versión 1:
 
@@ -115,7 +115,7 @@ En modo global, una acción de creación muestra una explicación en lugar de fa
 
 La terminal mínima soportada es de 90 columnas por 40 filas (`90x40`). El cuerpo reserva dinámicamente el espacio ocupado por el pie contextual multilínea.
 
-El editor Markdown se resuelve primero mediante `$VISUAL` y después `$EDITOR`.
+El editor Markdown se resuelve primero mediante `$VISUAL` y después `$EDITOR`. Si un cambio concurrente impide guardar, las ediciones se conservan en el archivo temporal y el error muestra su ruta.
 
 ### Recurrencia
 

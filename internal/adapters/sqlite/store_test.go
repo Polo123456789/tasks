@@ -163,6 +163,96 @@ func TestOptimisticConflictAcrossIndependentConnections(t *testing.T) {
 	}
 }
 
+func TestOptimisticConflictProtectsSubtasksAndDependencies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aggregate-concurrent.tasks")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	ctx := context.Background()
+	parent, err := first.CreateTask(ctx, domain.Task{Title: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := second.Task(ctx, parent.ID)
+	child, err := first.AddSubtask(ctx, parent.ID, parent.Version, "first child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = second.AddSubtask(ctx, parent.ID, stale.Version, "lost child"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale subtask creation: %v", err)
+	}
+
+	current, _ := first.Task(ctx, parent.ID)
+	stale, _ = second.Task(ctx, parent.ID)
+	if _, err = first.RenameSubtask(ctx, parent.ID, child.ID, current.Version, "first rename"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = second.RenameSubtask(ctx, parent.ID, child.ID, stale.Version, "lost rename"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale subtask rename: %v", err)
+	}
+	got, _ := first.Task(ctx, parent.ID)
+	if len(got.Subtasks) != 1 || got.Subtasks[0].Title != "first rename" {
+		t.Fatalf("stale write changed subtasks: %#v", got.Subtasks)
+	}
+
+	done := statusByKind(t, first, domain.StatusDone)
+	cancelled := statusByKind(t, first, domain.StatusCancelled)
+	current, _ = first.Task(ctx, parent.ID)
+	stale, _ = second.Task(ctx, parent.ID)
+	if err = first.SetSubtaskStatus(ctx, parent.ID, child.ID, done.ID, current.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err = second.SetSubtaskStatus(ctx, parent.ID, child.ID, cancelled.ID, stale.Version); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale subtask status: %v", err)
+	}
+
+	prerequisiteOne, _ := first.CreateTask(ctx, domain.Task{Title: "one"})
+	prerequisiteTwo, _ := first.CreateTask(ctx, domain.Task{Title: "two"})
+	current, _ = first.Task(ctx, parent.ID)
+	stale, _ = second.Task(ctx, parent.ID)
+	if err = first.AddDependency(ctx, parent.ID, prerequisiteOne.ID, current.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err = second.AddDependency(ctx, parent.ID, prerequisiteTwo.ID, stale.Version); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale dependency creation: %v", err)
+	}
+	got, _ = first.Task(ctx, parent.ID)
+	if len(got.DependencyIDs) != 1 || got.DependencyIDs[0] != prerequisiteOne.ID {
+		t.Fatalf("stale write changed dependencies: %#v", got.DependencyIDs)
+	}
+}
+
+func TestTaskReadsRejectMalformedStoredValues(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	task, err := s.CreateTask(ctx, domain.Task{Title: "valid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec("UPDATE tasks SET start_date='not-a-date' WHERE id=?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Task(ctx, task.ID); err == nil || !strings.Contains(err.Error(), "start_date") {
+		t.Fatalf("malformed date was silently accepted: %v", err)
+	}
+	if _, err = s.ListTasks(ctx, ports.TaskFilter{}); err == nil || !strings.Contains(err.Error(), "start_date") {
+		t.Fatalf("list silently accepted malformed date: %v", err)
+	}
+	if _, err = s.db.Exec("UPDATE tasks SET start_date=NULL,created_at='not-a-timestamp' WHERE id=?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Task(ctx, task.ID); err == nil || !strings.Contains(err.Error(), "created_at") {
+		t.Fatalf("malformed timestamp was silently accepted: %v", err)
+	}
+}
+
 func TestBusyDatabaseReturnsBoundedError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "busy.tasks")
 	first, err := Open(path)
@@ -266,6 +356,36 @@ func TestOpenRejectsFutureAndCorruptDatabases(t *testing.T) {
 	}
 	if _, err = Open(corrupt); err == nil {
 		t.Fatal("corrupt database was accepted")
+	}
+}
+
+func TestOpenDoesNotModifyUnrecognizedSQLiteDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unrelated.tasks")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec("CREATE TABLE precious(value TEXT); INSERT INTO precious(value) VALUES('keep')"); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Open(path); err == nil || !strings.Contains(err.Error(), "unrecognized") {
+		t.Fatalf("unrelated database error=%v", err)
+	}
+	database, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var value string
+	if err = database.QueryRow("SELECT value FROM precious").Scan(&value); err != nil || value != "keep" {
+		t.Fatalf("unrelated data changed: value=%q err=%v", value, err)
+	}
+	var tasksTable int
+	if err = database.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='tasks'").Scan(&tasksTable); err != nil || tasksTable != 0 {
+		t.Fatalf("tasks schema was added to unrelated database: count=%d err=%v", tasksTable, err)
 	}
 }
 
@@ -408,10 +528,19 @@ func TestDeleteStatusMovesTasksAndSubtasksToNormalDestination(t *testing.T) {
 	source, _ := s.CreateStatus(ctx, "Source", false)
 	destination, _ := s.CreateStatus(ctx, "Destination", false)
 	task, _ := s.CreateTask(ctx, domain.Task{Title: "task", StatusID: source.ID})
-	subtask, _ := s.AddSubtask(ctx, task.ID, "subtask")
-	if err := s.SetSubtaskStatus(ctx, subtask.ID, source.ID); err != nil {
+	subtask, _ := s.AddSubtask(ctx, task.ID, task.Version, "subtask")
+	task, _ = s.Task(ctx, task.ID)
+	if err := s.SetSubtaskStatus(ctx, task.ID, subtask.ID, source.ID, task.Version); err != nil {
 		t.Fatal(err)
 	}
+	other, _ := s.CreateTask(ctx, domain.Task{Title: "other"})
+	otherSubtask, _ := s.AddSubtask(ctx, other.ID, other.Version, "other subtask")
+	other, _ = s.Task(ctx, other.ID)
+	if err := s.SetSubtaskStatus(ctx, other.ID, otherSubtask.ID, source.ID, other.Version); err != nil {
+		t.Fatal(err)
+	}
+	other, _ = s.Task(ctx, other.ID)
+	staleOther := other
 	if err := s.DeleteStatus(ctx, source.ID, nil); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("missing destination: %v", err)
 	}
@@ -421,6 +550,10 @@ func TestDeleteStatusMovesTasksAndSubtasksToNormalDestination(t *testing.T) {
 	}
 	if err := s.DeleteStatus(ctx, source.ID, &destination.ID); err != nil {
 		t.Fatal(err)
+	}
+	staleOther.Title = "stale overwrite"
+	if _, err := s.UpdateTask(ctx, staleOther); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("subtask status migration did not invalidate parent: %v", err)
 	}
 	got, _ := s.Task(ctx, task.ID)
 	if got.StatusID != destination.ID || len(got.Subtasks) != 1 || got.Subtasks[0].StatusID != destination.ID {
@@ -437,13 +570,13 @@ func TestDependencyCycle(t *testing.T) {
 	a, _ := s.CreateTask(ctx, domain.Task{Title: "a"})
 	b, _ := s.CreateTask(ctx, domain.Task{Title: "b"})
 	c, _ := s.CreateTask(ctx, domain.Task{Title: "c"})
-	if e := s.AddDependency(ctx, a.ID, b.ID); e != nil {
+	if e := s.AddDependency(ctx, a.ID, b.ID, a.Version); e != nil {
 		t.Fatal(e)
 	}
-	if e := s.AddDependency(ctx, b.ID, c.ID); e != nil {
+	if e := s.AddDependency(ctx, b.ID, c.ID, b.Version); e != nil {
 		t.Fatal(e)
 	}
-	if e := s.AddDependency(ctx, c.ID, a.ID); !errors.Is(e, domain.ErrDependencyCycle) {
+	if e := s.AddDependency(ctx, c.ID, a.ID, c.Version); !errors.Is(e, domain.ErrDependencyCycle) {
 		t.Fatalf("expected cycle: %v", e)
 	}
 }
@@ -470,19 +603,21 @@ func TestSubtaskCompletionRulesAndParentPropagation(t *testing.T) {
 	done := statusByKind(t, s, domain.StatusDone)
 	cancelled := statusByKind(t, s, domain.StatusCancelled)
 	parent, _ := s.CreateTask(ctx, domain.Task{Title: "parent"})
-	one, err := s.AddSubtask(ctx, parent.ID, " first ")
+	one, err := s.AddSubtask(ctx, parent.ID, parent.Version, " first ")
 	if err != nil || one.Title != "first" {
 		t.Fatalf("add first: %#v %v", one, err)
 	}
-	if err = s.SetSubtaskStatus(ctx, one.ID, done.ID); err != nil {
+	parent, _ = s.Task(ctx, parent.ID)
+	if err = s.SetSubtaskStatus(ctx, parent.ID, one.ID, done.ID, parent.Version); err != nil {
 		t.Fatal(err)
 	}
 	parent, _ = s.Task(ctx, parent.ID)
 	if parent.Status.Kind == domain.StatusDone {
 		t.Fatal("one completed subtask must not complete its parent")
 	}
-	two, _ := s.AddSubtask(ctx, parent.ID, "second")
-	if err = s.SetSubtaskStatus(ctx, two.ID, done.ID); err != nil {
+	two, _ := s.AddSubtask(ctx, parent.ID, parent.Version, "second")
+	parent, _ = s.Task(ctx, parent.ID)
+	if err = s.SetSubtaskStatus(ctx, parent.ID, two.ID, done.ID, parent.Version); err != nil {
 		t.Fatal(err)
 	}
 	parent, _ = s.Task(ctx, parent.ID)
@@ -548,7 +683,7 @@ func TestDependencyBlockingTracksDoneCancelledAndReopened(t *testing.T) {
 	cancelled := statusByKind(t, s, domain.StatusCancelled)
 	dependent, _ := s.CreateTask(ctx, domain.Task{Title: "dependent"})
 	prerequisite, _ := s.CreateTask(ctx, domain.Task{Title: "prerequisite"})
-	if err := s.AddDependency(ctx, dependent.ID, prerequisite.ID); err != nil {
+	if err := s.AddDependency(ctx, dependent.ID, prerequisite.ID, dependent.Version); err != nil {
 		t.Fatal(err)
 	}
 	assertBlocked := func(want bool) domain.Task {
@@ -572,21 +707,22 @@ func TestSubtaskAndDependencyValidation(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	task, _ := s.CreateTask(ctx, domain.Task{Title: "task"})
-	if _, err := s.AddSubtask(ctx, task.ID, "  "); !errors.Is(err, domain.ErrValidation) {
+	if _, err := s.AddSubtask(ctx, task.ID, task.Version, "  "); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("blank subtask: %v", err)
 	}
-	if _, err := s.AddSubtask(ctx, 9999, "missing"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.AddSubtask(ctx, 9999, 1, "missing"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing parent: %v", err)
 	}
-	if err := s.AddDependency(ctx, task.ID, 9999); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.AddDependency(ctx, task.ID, 9999, task.Version); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing dependency: %v", err)
 	}
-	sub, _ := s.AddSubtask(ctx, task.ID, "old")
-	sub, err := s.RenameSubtask(ctx, sub.ID, " new ")
+	sub, _ := s.AddSubtask(ctx, task.ID, task.Version, "old")
+	task, _ = s.Task(ctx, task.ID)
+	sub, err := s.RenameSubtask(ctx, task.ID, sub.ID, task.Version, " new ")
 	if err != nil || sub.Title != "new" {
 		t.Fatalf("rename subtask: %#v %v", sub, err)
 	}
-	if _, err = s.RenameSubtask(ctx, sub.ID, " "); !errors.Is(err, domain.ErrValidation) {
+	if _, err = s.RenameSubtask(ctx, task.ID, sub.ID, task.Version, " "); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("blank rename: %v", err)
 	}
 }
@@ -595,17 +731,17 @@ func TestTrashedTaskSubtasksCannotBeEdited(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	task, _ := s.CreateTask(ctx, domain.Task{Title: "parent"})
-	subtask, _ := s.AddSubtask(ctx, task.ID, "child")
+	subtask, _ := s.AddSubtask(ctx, task.ID, task.Version, "child")
 	task, _ = s.Task(ctx, task.ID)
 	today, _ := domain.ParseDate("2026-07-15")
 	if _, err := s.TrashTask(ctx, task.ID, task.Version, today); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RenameSubtask(ctx, subtask.ID, "changed"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.RenameSubtask(ctx, task.ID, subtask.ID, task.Version, "changed"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("renamed trashed subtask: %v", err)
 	}
 	initial := statusByKind(t, s, domain.StatusNormal)
-	if err := s.SetSubtaskStatus(ctx, subtask.ID, initial.ID); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.SetSubtaskStatus(ctx, task.ID, subtask.ID, initial.ID, task.Version); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("changed trashed subtask: %v", err)
 	}
 }
@@ -631,13 +767,19 @@ func TestTrashRemovesDependenciesPermanentlyOnRestore(t *testing.T) {
 	ctx := context.Background()
 	a, _ := s.CreateTask(ctx, domain.Task{Title: "a"})
 	b, _ := s.CreateTask(ctx, domain.Task{Title: "b"})
-	if err := s.AddDependency(ctx, a.ID, b.ID); err != nil {
+	c, _ := s.CreateTask(ctx, domain.Task{Title: "c"})
+	if err := s.AddDependency(ctx, a.ID, b.ID, a.Version); err != nil {
 		t.Fatal(err)
 	}
+	a, _ = s.Task(ctx, a.ID)
+	staleVersion := a.Version
 	today, _ := domain.ParseDate("2026-07-15")
 	affected, err := s.TrashTask(ctx, b.ID, b.Version, today)
 	if err != nil || len(affected) != 1 || affected[0] != a.ID {
 		t.Fatalf("affected=%v err=%v", affected, err)
+	}
+	if err = s.AddDependency(ctx, a.ID, c.ID, staleVersion); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("dependent task version was not invalidated: %v", err)
 	}
 	b, err = s.Task(ctx, b.ID)
 	if err != nil || b.DeletedAt == nil {
@@ -709,11 +851,11 @@ func TestRecurrenceMaintenanceResetsCurrentCycleAndRecordsSkipped(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub, _ := s.AddSubtask(ctx, task.ID, "child")
+	sub, _ := s.AddSubtask(ctx, task.ID, task.Version, "child")
 	task, _ = s.Task(ctx, task.ID)
 	task, _ = s.SetTaskStatus(ctx, task.ID, done.ID, task.Version)
 	dependency, _ := s.CreateTask(ctx, domain.Task{Title: "dependency"})
-	if err = s.AddDependency(ctx, task.ID, dependency.ID); err != nil {
+	if err = s.AddDependency(ctx, task.ID, dependency.ID, task.Version); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Maintain(ctx, today); err != nil {

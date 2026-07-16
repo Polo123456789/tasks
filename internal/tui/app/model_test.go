@@ -101,26 +101,26 @@ func (b *fakeBackend) Detail(_ context.Context, _ string, id int64) (domain.Task
 func (b *fakeBackend) History(context.Context, string, int64) ([]domain.HistoryEvent, error) {
 	return []domain.HistoryEvent{{Kind: "created"}}, nil
 }
-func (b *fakeBackend) AddSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+func (b *fakeBackend) AddSubtask(context.Context, string, int64, int64, string) (domain.Subtask, error) {
 	b.addSubCalls++
 	return domain.Subtask{}, nil
 }
-func (b *fakeBackend) RenameSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+func (b *fakeBackend) RenameSubtask(context.Context, string, int64, int64, int64, string) (domain.Subtask, error) {
 	b.renameSubCalls++
 	return domain.Subtask{}, nil
 }
-func (b *fakeBackend) ToggleSubtask(context.Context, string, int64, int64) error {
+func (b *fakeBackend) ToggleSubtask(context.Context, string, int64, int64, int64) error {
 	b.toggleSubCalls++
 	return nil
 }
-func (b *fakeBackend) MoveSubtaskStatus(context.Context, string, int64, int64, int) error {
+func (b *fakeBackend) MoveSubtaskStatus(context.Context, string, int64, int64, int64, int) error {
 	return nil
 }
-func (b *fakeBackend) AddDependency(context.Context, string, int64, int64) error {
+func (b *fakeBackend) AddDependency(context.Context, string, int64, int64, int64) error {
 	b.addDepCalls++
 	return nil
 }
-func (b *fakeBackend) RemoveDependency(context.Context, string, int64, int64) error {
+func (b *fakeBackend) RemoveDependency(context.Context, string, int64, int64, int64) error {
 	b.removeDepCalls++
 	return nil
 }

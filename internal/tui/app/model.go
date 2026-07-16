@@ -41,12 +41,12 @@ type Backend interface {
 	UpdateDate(context.Context, string, int64, int64, string, *domain.Date) (domain.Task, error)
 	Detail(context.Context, string, int64) (domain.Task, error)
 	History(context.Context, string, int64) ([]domain.HistoryEvent, error)
-	AddSubtask(context.Context, string, int64, string) (domain.Subtask, error)
-	RenameSubtask(context.Context, string, int64, string) (domain.Subtask, error)
-	ToggleSubtask(context.Context, string, int64, int64) error
-	MoveSubtaskStatus(context.Context, string, int64, int64, int) error
-	AddDependency(context.Context, string, int64, int64) error
-	RemoveDependency(context.Context, string, int64, int64) error
+	AddSubtask(context.Context, string, int64, int64, string) (domain.Subtask, error)
+	RenameSubtask(context.Context, string, int64, int64, int64, string) (domain.Subtask, error)
+	ToggleSubtask(context.Context, string, int64, int64, int64) error
+	MoveSubtaskStatus(context.Context, string, int64, int64, int64, int) error
+	AddDependency(context.Context, string, int64, int64, int64) error
+	RemoveDependency(context.Context, string, int64, int64, int64) error
 	DependencyCandidates(context.Context, string, int64, bool) ([]domain.Task, error)
 	UpdateRecurrence(context.Context, string, int64, int64, *domain.Recurrence) (domain.Task, error)
 	CreateStatus(context.Context, string) (domain.Status, error)
@@ -588,7 +588,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					e := m.backend.ToggleSubtask(ctx, task.Source, task.ID, subtaskID)
+					e := m.backend.ToggleSubtask(ctx, task.Source, task.ID, subtaskID, task.Version)
 					return mutated{action: "Subtarea actualizada", err: e}
 				}
 			}
@@ -603,7 +603,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					e := m.backend.MoveSubtaskStatus(ctx, task.Source, task.ID, subtaskID, direction)
+					e := m.backend.MoveSubtaskStatus(ctx, task.Source, task.ID, subtaskID, task.Version, direction)
 					return mutated{action: "Estado de subtarea actualizado", err: e}
 				}
 			}
@@ -954,9 +954,9 @@ func (m Model) updatePicker(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			defer cancel()
 			switch action {
 			case "add-dependency":
-				return mutated{action: "Dependencia creada", err: m.backend.AddDependency(ctx, task.Source, task.ID, option.ID)}
+				return mutated{action: "Dependencia creada", err: m.backend.AddDependency(ctx, task.Source, task.ID, option.ID, task.Version)}
 			case "remove-dependency":
-				return mutated{action: "Dependencia eliminada", err: m.backend.RemoveDependency(ctx, task.Source, task.ID, option.ID)}
+				return mutated{action: "Dependencia eliminada", err: m.backend.RemoveDependency(ctx, task.Source, task.ID, option.ID, task.Version)}
 			case "delete-status":
 				var destination *int64
 				if option.ID != 0 {
@@ -1235,7 +1235,7 @@ func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				_, e := m.backend.AddSubtask(ctx, task.Source, task.ID, title)
+				_, e := m.backend.AddSubtask(ctx, task.Source, task.ID, task.Version, title)
 				return mutated{action: "Subtarea creada", err: e}
 			}
 		}
@@ -1245,7 +1245,7 @@ func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				_, e := m.backend.RenameSubtask(ctx, task.Source, subtaskID, title)
+				_, e := m.backend.RenameSubtask(ctx, task.Source, task.ID, subtaskID, task.Version, title)
 				return mutated{action: "Subtarea editada", err: e}
 			}
 		}

@@ -109,18 +109,18 @@ func (f fake) Detail(_ context.Context, _ string, id int64) (domain.Task, error)
 func (fake) History(context.Context, string, int64) ([]domain.HistoryEvent, error) {
 	return []domain.HistoryEvent{{Kind: "created", Detail: "fixture", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}, nil
 }
-func (fake) AddSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+func (fake) AddSubtask(context.Context, string, int64, int64, string) (domain.Subtask, error) {
 	return domain.Subtask{}, nil
 }
-func (fake) RenameSubtask(context.Context, string, int64, string) (domain.Subtask, error) {
+func (fake) RenameSubtask(context.Context, string, int64, int64, int64, string) (domain.Subtask, error) {
 	return domain.Subtask{}, nil
 }
-func (fake) ToggleSubtask(context.Context, string, int64, int64) error { return nil }
-func (fake) MoveSubtaskStatus(context.Context, string, int64, int64, int) error {
+func (fake) ToggleSubtask(context.Context, string, int64, int64, int64) error { return nil }
+func (fake) MoveSubtaskStatus(context.Context, string, int64, int64, int64, int) error {
 	return nil
 }
-func (fake) AddDependency(context.Context, string, int64, int64) error { return nil }
-func (fake) RemoveDependency(context.Context, string, int64, int64) error {
+func (fake) AddDependency(context.Context, string, int64, int64, int64) error { return nil }
+func (fake) RemoveDependency(context.Context, string, int64, int64, int64) error {
 	return nil
 }
 func (f fake) DependencyCandidates(ctx context.Context, _ string, taskID int64, existingOnly bool) ([]domain.Task, error) {

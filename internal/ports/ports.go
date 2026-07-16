@@ -41,11 +41,11 @@ type TaskStore interface {
 	DependencyImpact(context.Context, int64) ([]int64, error)
 	TrashTask(context.Context, int64, int64, domain.Date) ([]int64, error)
 	RestoreTask(context.Context, int64, int64) (domain.Task, error)
-	AddSubtask(context.Context, int64, string) (domain.Subtask, error)
-	RenameSubtask(context.Context, int64, string) (domain.Subtask, error)
-	SetSubtaskStatus(context.Context, int64, int64) error
-	AddDependency(context.Context, int64, int64) error
-	RemoveDependency(context.Context, int64, int64) error
+	AddSubtask(context.Context, int64, int64, string) (domain.Subtask, error)
+	RenameSubtask(context.Context, int64, int64, int64, string) (domain.Subtask, error)
+	SetSubtaskStatus(context.Context, int64, int64, int64, int64) error
+	AddDependency(context.Context, int64, int64, int64) error
+	RemoveDependency(context.Context, int64, int64, int64) error
 	History(context.Context, int64) ([]domain.HistoryEvent, error)
 	Maintain(context.Context, domain.Date) error
 	Close() error

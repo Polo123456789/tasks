@@ -76,10 +76,10 @@ func TestGlobalModeCanModifyExistingRecurrenceButNotAddOne(t *testing.T) {
 
 func TestGlobalModeRejectsSubtaskAndDependencyCreation(t *testing.T) {
 	service := Service{Mode: domain.ModeGlobal}
-	if _, err := service.AddSubtask(context.Background(), "project.tasks", 1, "child"); err != domain.ErrForbidden {
+	if _, err := service.AddSubtask(context.Background(), "project.tasks", 1, 1, "child"); err != domain.ErrForbidden {
 		t.Fatalf("subtask: got %v, want forbidden", err)
 	}
-	if err := service.AddDependency(context.Background(), "project.tasks", 1, 2); err != domain.ErrForbidden {
+	if err := service.AddDependency(context.Background(), "project.tasks", 1, 2, 1); err != domain.ErrForbidden {
 		t.Fatalf("dependency: got %v, want forbidden", err)
 	}
 	if _, err := service.CreateStatus(context.Background(), "project.tasks", "New", false); err != domain.ErrForbidden {
@@ -97,9 +97,10 @@ func TestMoveSubtaskAcrossProjectStatuses(t *testing.T) {
 	}
 	defer store.Close()
 	task, _ := store.CreateTask(context.Background(), domain.Task{Title: "parent"})
-	subtask, _ := store.AddSubtask(context.Background(), task.ID, "child")
+	subtask, _ := store.AddSubtask(context.Background(), task.ID, task.Version, "child")
+	task, _ = store.Task(context.Background(), task.ID)
 	service := Service{Mode: domain.ModeLocal, Projects: []Project{{Path: "project.tasks", Store: store}}}
-	if err = service.MoveSubtaskStatus(context.Background(), "", task.ID, subtask.ID, 1); err != nil {
+	if err = service.MoveSubtaskStatus(context.Background(), "", task.ID, subtask.ID, task.Version, 1); err != nil {
 		t.Fatal(err)
 	}
 	updated, _ := store.Task(context.Background(), task.ID)
@@ -240,7 +241,7 @@ func TestDependencyCandidatesIgnoreViewFiltersAndNameExistingChoices(t *testing.
 	if err != nil || len(choices) != 2 {
 		t.Fatalf("choices=%#v err=%v", choices, err)
 	}
-	if err = service.AddDependency(context.Background(), "", parent.ID, second.ID); err != nil {
+	if err = service.AddDependency(context.Background(), "", parent.ID, second.ID, parent.Version); err != nil {
 		t.Fatal(err)
 	}
 	existing, err := service.DependencyCandidates(context.Background(), "", parent.ID, true)
