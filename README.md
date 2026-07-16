@@ -100,6 +100,36 @@ El formato actual es `tasks-project` versión 1:
 - Las subtareas admiten solo título y estado. `depends_on` referencia claves de otras tareas y no admite ciclos.
 - Los campos omitidos usan el estado inicial, prioridad `none`, Markdown vacío o listas vacías según corresponda. Se rechazan campos desconocidos y texto fuera del objeto JSON.
 
+## Agregar tareas desde scripts o agentes
+
+`tasks add` agrega un lote usando el mismo formato `tasks-project` versión 1. Sin opciones, el destino siempre es el almacén global, incluso si el comando se ejecuta dentro de un proyecto:
+
+La referencia del formato y un ejemplo completo están disponibles con `tasks add --help`.
+
+```sh
+tasks add resultado.json
+cat resultado.json | tasks add -
+```
+
+Para agregar el lote a un proyecto existente, indique su archivo mediante una ruta absoluta o relativa:
+
+```sh
+tasks add --project mi-proyecto.tasks resultado.json
+cat resultado.json | tasks add --project=../otro/plan.tasks
+```
+
+En `add`, la sección `statuses` no modifica la configuración del destino: sus nombres deben coincidir exactamente con estados normales existentes y el marcado con `initial` debe ser el estado inicial real. El destino puede tener otros estados. Las claves `done` y `cancelled` siguen identificando los estados especiales.
+
+El lote completo se guarda de forma atómica. Las claves de tareas solo relacionan elementos del mismo JSON; no referencian tareas preexistentes ni evitan duplicados entre ejecuciones. Una entrada correcta imprime JSON con el destino, los conteos y el ID asignado a cada clave:
+
+```json
+{
+  "destination": {"kind": "project", "path": "/ruta/mi-proyecto.tasks"},
+  "created": {"tasks": 2, "subtasks": 1, "dependencies": 1},
+  "tasks": [{"key": "scope", "id": 17}, {"key": "implementation", "id": 18}]
+}
+```
+
 ### Resumen para el inicio de la terminal
 
 `tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto muestra primero el Gantt del mes actual y después resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.

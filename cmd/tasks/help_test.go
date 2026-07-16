@@ -24,13 +24,48 @@ func TestGlobalHelpAliasesMatchWithoutCreatingConfiguration(t *testing.T) {
 			t.Fatalf("%s output differs from global help", argument)
 		}
 	}
-	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks summary", "tasks is-project", "--color=", "-h, --help"} {
+	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks add [--project ruta.tasks]", "tasks add --help", "tasks summary", "tasks is-project", "--project", "--color=", "-h, --help"} {
 		if !strings.Contains(expected, text) {
 			t.Fatalf("help missing %q", text)
 		}
 	}
 	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("help created configuration: %v", err)
+	}
+}
+
+func TestAddHelpAliasesDescribeFormatWithoutCreatingConfiguration(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+	var expected string
+	for _, argument := range []string{"-h", "--help"} {
+		var output bytes.Buffer
+		if err := runArgs([]string{"add", argument}, strings.NewReader(""), &output); err != nil {
+			t.Fatalf("add %s: %v", argument, err)
+		}
+		if expected == "" {
+			expected = output.String()
+		} else if output.String() != expected {
+			t.Fatalf("add %s output differs", argument)
+		}
+	}
+	for _, text := range []string{
+		"tasks add — agregar tareas desde JSON",
+		`"format": "tasks-project"`,
+		`"version": 1`,
+		`"statuses"`,
+		`"tasks"`,
+		"priority",
+		"recurrence",
+		"depends_on",
+		"El lote es atómico",
+	} {
+		if !strings.Contains(expected, text) {
+			t.Fatalf("add help missing %q", text)
+		}
+	}
+	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("add help created configuration: %v", err)
 	}
 }
 
@@ -47,6 +82,10 @@ func TestParseInvocationRejectsUnknownCommandsOptionsAndBadArity(t *testing.T) {
 		{name: "is-project option", args: []string{"is-project", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "import target option", args: []string{"import", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "import source option", args: []string{"import", "project.tasks", "--missing"}, want: `opción desconocida "--missing"`},
+		{name: "add option", args: []string{"add", "--missing"}, want: `opción desconocida "--missing"`},
+		{name: "add missing project", args: []string{"add", "--project"}, want: "uso: tasks add"},
+		{name: "add duplicate project", args: []string{"add", "--project=a.tasks", "--project", "b.tasks"}, want: "uso: tasks add"},
+		{name: "add extra source", args: []string{"add", "one.json", "two.json"}, want: "uso: tasks add"},
 		{name: "help option", args: []string{"help", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "help argument", args: []string{"help", "import"}, want: "uso: tasks help"},
 		{name: "init missing", args: []string{"init"}, want: "uso: tasks init nombre.tasks"},
@@ -80,6 +119,18 @@ func TestParseInvocationPreservesTUIAndImportStdin(t *testing.T) {
 	invocation, err = parseInvocation([]string{"is-project"})
 	if err != nil || invocation.kind != commandIsProject {
 		t.Fatalf("is-project invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"add", "batch.json", "--project", "project.tasks"})
+	if err != nil || invocation.kind != commandAdd || invocation.source != "batch.json" || invocation.project != "project.tasks" || !invocation.projectSet {
+		t.Fatalf("add invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"add", "--project=other.tasks", "-"})
+	if err != nil || invocation.kind != commandAdd || invocation.source != "-" || invocation.project != "other.tasks" || !invocation.projectSet {
+		t.Fatalf("add equals invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"add", "--help"})
+	if err != nil || invocation.kind != commandAddHelp {
+		t.Fatalf("add help invocation=%#v err=%v", invocation, err)
 	}
 	for _, test := range []struct {
 		args []string

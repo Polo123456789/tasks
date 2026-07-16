@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -30,6 +31,19 @@ const importJSON = `{
   "tasks": [
     {"key": "first", "title": "Primera", "status": "done", "priority": "high"},
     {"key": "second", "title": "Segunda", "depends_on": ["first"], "subtasks": [{"title": "Detalle"}]}
+  ]
+}`
+
+const addJSON = `{
+  "format": "tasks-project",
+  "version": 1,
+  "statuses": [
+    {"key": "todo", "name": "Pendiente", "initial": true},
+    {"key": "doing", "name": "En progreso"}
+  ],
+  "tasks": [
+    {"key": "first", "title": "Primera agregada", "status": "done", "priority": "high"},
+    {"key": "second", "title": "Segunda agregada", "status": "doing", "depends_on": ["first"], "subtasks": [{"title": "Detalle agregado"}]}
   ]
 }`
 
@@ -176,6 +190,116 @@ func TestGlobalStoreIsPrivateAndPersistent(t *testing.T) {
 	persisted, err := store.Task(context.Background(), created.ID)
 	if err != nil || persisted.Title != created.Title {
 		t.Fatalf("persisted=%#v err=%v", persisted, err)
+	}
+}
+
+func TestAddCommandDefaultsToGlobalEvenInsideProject(t *testing.T) {
+	root := t.TempDir()
+	projectDirectory := filepath.Join(root, "project")
+	if err := os.Mkdir(projectDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(projectDirectory, "local.tasks")
+	localStore, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = localStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(projectDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	var stdout bytes.Buffer
+	if err = runArgs([]string{"add", "-"}, strings.NewReader(addJSON), &stdout); err != nil {
+		t.Fatal(err)
+	}
+	var output addOutput
+	if err = json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("output=%q err=%v", stdout.String(), err)
+	}
+	if output.Destination.Kind != "global" || output.Destination.Path != "" || output.Created != (addCounts{Tasks: 2, Subtasks: 1, Dependencies: 1}) || len(output.Tasks) != 2 || output.Tasks[0].Key != "first" || output.Tasks[0].ID == 0 {
+		t.Fatalf("output=%#v", output)
+	}
+
+	globalStore, err := db.Open(filepath.Join(config, "tasks", "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalTasks, err := globalStore.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr := globalStore.Close()
+	if err != nil || closeErr != nil || len(globalTasks) != 2 {
+		t.Fatalf("global tasks=%#v err=%v close=%v", globalTasks, err, closeErr)
+	}
+	localStore, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localTasks, err := localStore.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr = localStore.Close()
+	if err != nil || closeErr != nil || len(localTasks) != 0 {
+		t.Fatalf("local tasks=%#v err=%v close=%v", localTasks, err, closeErr)
+	}
+}
+
+func TestAddCommandTargetsExistingProjectByRelativePathAndFile(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project.tasks")
+	store, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(root, "batch.json")
+	if err = os.WriteFile(sourcePath, []byte(addJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	invocation := invocation{kind: commandAdd, project: "project.tasks", projectSet: true, source: sourcePath}
+	output, err := addTasks(context.Background(), root, invocation, strings.NewReader("ignored"), fixedClock{now: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Destination.Kind != "project" || output.Destination.Path != projectPath || output.Created.Tasks != 2 || len(output.Tasks) != 2 {
+		t.Fatalf("output=%#v", output)
+	}
+	if _, err = os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("project add created configuration: %v", err)
+	}
+	store, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tasks, err := store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("tasks=%#v err=%v", tasks, err)
+	}
+}
+
+func TestAddCommandRejectsEmptyBatchBeforeCreatingGlobalStore(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+	empty := `{"format":"tasks-project","version":1,"statuses":[{"key":"todo","name":"Pendiente","initial":true}],"tasks":[]}`
+	var stdout bytes.Buffer
+	err := runArgs([]string{"add"}, strings.NewReader(empty), &stdout)
+	if !errors.Is(err, domain.ErrValidation) || !strings.Contains(err.Error(), "at least one task") || stdout.Len() != 0 {
+		t.Fatalf("error=%v stdout=%q", err, stdout.String())
+	}
+	if _, statErr := os.Stat(config); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("empty batch created configuration: %v", statErr)
 	}
 }
 

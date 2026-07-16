@@ -139,6 +139,87 @@ func TestImportProjectDefensivelyRejectsDependencyCycle(t *testing.T) {
 	}
 }
 
+func TestAddTasksAppendsAtomicBatchWithoutChangingStatuses(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	existing, err := s.CreateTask(ctx, domain.Task{Title: "Existente"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{
+			{Key: "todo", Name: "Pendiente", Initial: true},
+			{Key: "doing", Name: "En progreso"},
+		},
+		Tasks: []projectimport.TaskSeed{
+			{Key: "base", StatusKey: projectimport.StatusDone, Task: domain.Task{Title: "Base", Priority: domain.PriorityUrgent}},
+			{Key: "delivery", StatusKey: "doing", Task: domain.Task{Title: "Entrega"}, Subtasks: []projectimport.SubtaskSeed{{Title: "Detalle", StatusKey: "todo"}}, DependsOn: []string{"base"}},
+		},
+	}
+	addedAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.FixedZone("local", -6*60*60))
+	result, err := s.AddTasks(ctx, seed, addedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary != (projectimport.Summary{Tasks: 2, Subtasks: 1, Dependencies: 1}) || len(result.Tasks) != 2 || result.Tasks[0].Key != "base" || result.Tasks[0].ID == 0 || result.Tasks[1].Key != "delivery" || result.Tasks[1].ID == 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	statuses, err := s.Statuses(ctx)
+	if err != nil || len(statuses) != 5 || statuses[0].Name != "Pendiente" || !statuses[0].Initial || statuses[1].Name != "En progreso" {
+		t.Fatalf("statuses=%#v err=%v", statuses, err)
+	}
+	tasks, err := s.ListTasks(ctx, ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	if err != nil || len(tasks) != 3 {
+		t.Fatalf("tasks=%#v err=%v", tasks, err)
+	}
+	if _, err = s.Task(ctx, existing.ID); err != nil {
+		t.Fatalf("existing task changed or disappeared: %v", err)
+	}
+	delivery, err := s.Task(ctx, result.Tasks[1].ID)
+	if err != nil || delivery.Status.Name != "En progreso" || len(delivery.Subtasks) != 1 || delivery.Subtasks[0].Status.Name != "Pendiente" || delivery.DependencyCount != 1 {
+		t.Fatalf("delivery=%#v err=%v", delivery, err)
+	}
+	history, err := s.History(ctx, result.Tasks[0].ID)
+	if err != nil || len(history) != 1 || history[0].Kind != "created" || history[0].Detail != "added" || !history[0].CreatedAt.Equal(addedAt.UTC()) {
+		t.Fatalf("history=%#v err=%v", history, err)
+	}
+
+	repeated, err := s.AddTasks(ctx, seed, addedAt.Add(time.Minute))
+	if err != nil || repeated.Tasks[0].ID == result.Tasks[0].ID {
+		t.Fatalf("repeated=%#v err=%v", repeated, err)
+	}
+	tasks, err = s.ListTasks(ctx, ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	if err != nil || len(tasks) != 5 {
+		t.Fatalf("tasks after repeat=%d err=%v", len(tasks), err)
+	}
+}
+
+func TestAddTasksRejectsStatusMismatchAndRollsBackInvalidBatch(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	mismatched := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{{Key: "todo", Name: "En progreso", Initial: true}},
+		Tasks:    []projectimport.TaskSeed{{Key: "task", StatusKey: "todo", Task: domain.Task{Title: "No agregar"}}},
+	}
+	if _, err := s.AddTasks(ctx, mismatched, time.Now()); !errors.Is(err, domain.ErrValidation) || !strings.Contains(err.Error(), "not the destination's initial status") {
+		t.Fatalf("initial mismatch error=%v", err)
+	}
+	invalid := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{{Key: "todo", Name: "Pendiente", Initial: true}},
+		Tasks: []projectimport.TaskSeed{
+			{Key: "first", StatusKey: "todo", Task: domain.Task{Title: "Primera"}},
+			{Key: "second", StatusKey: "todo", Task: domain.Task{Title: "Segunda"}, DependsOn: []string{"missing"}},
+		},
+	}
+	if _, err := s.AddTasks(ctx, invalid, time.Now()); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("invalid dependency error=%v", err)
+	}
+	var count int
+	if err := s.db.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("task count=%d err=%v", count, err)
+	}
+}
+
 func TestOptimisticConflictAcrossIndependentConnections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "concurrent.tasks")
 	first, err := Open(path)

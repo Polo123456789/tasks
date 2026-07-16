@@ -82,10 +82,27 @@ type Summary struct {
 	Dependencies int
 }
 
+type CreatedTask struct {
+	Key string `json:"key"`
+	ID  int64  `json:"id"`
+}
+
+type AddResult struct {
+	Summary Summary
+	Tasks   []CreatedTask
+}
+
 // Importer is the bootstrap-only persistence port used to populate a new
 // project. It intentionally remains separate from the interactive TaskStore.
 type Importer interface {
 	ImportProject(context.Context, ProjectSeed, time.Time) (Summary, error)
+}
+
+// Appender is the additive persistence port used by non-interactive clients.
+// Implementations must add the complete batch atomically without changing
+// statuses or existing tasks.
+type Appender interface {
+	AddTasks(context.Context, ProjectSeed, time.Time) (AddResult, error)
 }
 
 func Decode(r io.Reader) (Document, error) {

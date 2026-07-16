@@ -356,4 +356,41 @@ func TestE2EImportCommandCreatesRegisteredProjectAndExits(t *testing.T) {
 	if err != nil || closeErr != nil || len(paths) != 1 || paths[0] != projectPath {
 		t.Fatalf("registry paths=%v err=%v close=%v", paths, err, closeErr)
 	}
+
+	addInput := `{"format":"tasks-project","version":1,"statuses":[{"key":"todo","name":"Pendiente","initial":true}],"tasks":[{"key":"added","title":"Agregada por comando"}]}`
+	addProject := exec.Command(binary, "add", "--project", "imported.tasks", "-")
+	addProject.Dir = projectDir
+	addProject.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	addProject.Stdin = strings.NewReader(addInput)
+	addOutput, err := addProject.CombinedOutput()
+	if err != nil || !strings.Contains(string(addOutput), `"kind":"project"`) || !strings.Contains(string(addOutput), `"key":"added"`) {
+		t.Fatalf("project add err=%v output=%s", err, addOutput)
+	}
+	store, err = db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err = store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr = store.Close()
+	if err != nil || closeErr != nil || len(tasks) != 2 {
+		t.Fatalf("project tasks after add=%#v err=%v close=%v", tasks, err, closeErr)
+	}
+
+	addGlobal := exec.Command(binary, "add", "-")
+	addGlobal.Dir = projectDir
+	addGlobal.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	addGlobal.Stdin = strings.NewReader(addInput)
+	globalOutput, err := addGlobal.CombinedOutput()
+	if err != nil || !strings.Contains(string(globalOutput), `"destination":{"kind":"global"}`) {
+		t.Fatalf("global add err=%v output=%s", err, globalOutput)
+	}
+	globalStore, err := db.Open(filepath.Join(config, "tasks", "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalTasks, err := globalStore.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	closeErr = globalStore.Close()
+	if err != nil || closeErr != nil || len(globalTasks) != 1 || globalTasks[0].Title != "Agregada por comando" {
+		t.Fatalf("global tasks=%#v err=%v close=%v", globalTasks, err, closeErr)
+	}
 }

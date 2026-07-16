@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -245,6 +247,10 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		_, e = io.WriteString(stdout, helpText)
 		return e
 	}
+	if invocation.kind == commandAddHelp {
+		_, e = io.WriteString(stdout, addHelpText)
+		return e
+	}
 	systemClock := clock.System{}
 	if invocation.kind == commandAIPrompt {
 		_, e := io.WriteString(stdout, projectimport.Prompt(systemClock.Today()))
@@ -263,6 +269,18 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 			return errNotInProject
 		}
 		return nil
+	}
+	if invocation.kind == commandAdd {
+		output, addErr := addTasks(context.Background(), cwd, invocation, stdin, systemClock)
+		if addErr != nil {
+			return addErr
+		}
+		var encoded bytes.Buffer
+		if e = json.NewEncoder(&encoded).Encode(output); e != nil {
+			return e
+		}
+		_, e = io.Copy(stdout, &encoded)
+		return e
 	}
 	data, e := os.UserConfigDir()
 	if e != nil {
@@ -375,26 +393,117 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 	return e
 }
 
-func importProject(ctx context.Context, cwd, name, source string, stdin io.Reader, reg ports.Registry, importClock ports.Clock) (projectimport.Summary, string, error) {
-	if e := filesystem.ValidateProjectName(name); e != nil {
-		return projectimport.Summary{}, "", e
+type addDestination struct {
+	Kind string `json:"kind"`
+	Path string `json:"path,omitempty"`
+}
+
+type addCounts struct {
+	Tasks        int `json:"tasks"`
+	Subtasks     int `json:"subtasks"`
+	Dependencies int `json:"dependencies"`
+}
+
+type addOutput struct {
+	Destination addDestination              `json:"destination"`
+	Created     addCounts                   `json:"created"`
+	Tasks       []projectimport.CreatedTask `json:"tasks"`
+}
+
+func addTasks(ctx context.Context, cwd string, invocation invocation, stdin io.Reader, addClock ports.Clock) (output addOutput, resultErr error) {
+	seed, err := readProjectSeed(invocation.source, stdin, addClock.Today())
+	if err != nil {
+		return addOutput{}, err
 	}
+	if len(seed.Tasks) == 0 {
+		return addOutput{}, domain.ValidationError{Field: "tasks", Message: "at least one task is required"}
+	}
+
+	var store *db.Store
+	if invocation.projectSet {
+		projectPath, pathErr := existingProjectPath(cwd, invocation.project)
+		if pathErr != nil {
+			return addOutput{}, pathErr
+		}
+		store, err = db.Open(projectPath)
+		if err != nil {
+			return addOutput{}, err
+		}
+		output.Destination = addDestination{Kind: "project", Path: projectPath}
+	} else {
+		configDirectory, configErr := os.UserConfigDir()
+		if configErr != nil {
+			return addOutput{}, configErr
+		}
+		store, err = openGlobalStore(filepath.Join(configDirectory, "tasks", "global.sqlite"))
+		if err != nil {
+			return addOutput{}, err
+		}
+		output.Destination = addDestination{Kind: "global"}
+	}
+	defer func() { resultErr = errors.Join(resultErr, store.Close()) }()
+
+	result, err := store.AddTasks(ctx, seed, addClock.Now())
+	if err != nil {
+		return addOutput{}, err
+	}
+	output.Created = addCounts{Tasks: result.Summary.Tasks, Subtasks: result.Summary.Subtasks, Dependencies: result.Summary.Dependencies}
+	output.Tasks = result.Tasks
+	return output, nil
+}
+
+func existingProjectPath(cwd, path string) (string, error) {
+	if filepath.Ext(path) != ".tasks" {
+		return "", fmt.Errorf("project path must reference an existing .tasks file")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("open project %s: %w", absolute, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("project path must reference a regular .tasks file")
+	}
+	if info.Size() == 0 {
+		return "", fmt.Errorf("project %s is empty and not a valid .tasks database", absolute)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", err
+	}
+	return canonical, nil
+}
+
+func readProjectSeed(source string, stdin io.Reader, today domain.Date) (projectimport.ProjectSeed, error) {
 	var reader io.Reader = stdin
 	var input *os.File
 	if source != "" && source != "-" {
-		var e error
-		input, e = os.Open(source)
-		if e != nil {
-			return projectimport.Summary{}, "", e
+		var err error
+		input, err = os.Open(source)
+		if err != nil {
+			return projectimport.ProjectSeed{}, err
 		}
 		defer input.Close()
 		reader = input
 	}
-	document, e := projectimport.Decode(reader)
-	if e != nil {
+	document, err := projectimport.Decode(reader)
+	if err != nil {
+		return projectimport.ProjectSeed{}, err
+	}
+	return projectimport.Normalize(document, today)
+}
+
+func importProject(ctx context.Context, cwd, name, source string, stdin io.Reader, reg ports.Registry, importClock ports.Clock) (projectimport.Summary, string, error) {
+	if e := filesystem.ValidateProjectName(name); e != nil {
 		return projectimport.Summary{}, "", e
 	}
-	seed, e := projectimport.Normalize(document, importClock.Today())
+	seed, e := readProjectSeed(source, stdin, importClock.Today())
 	if e != nil {
 		return projectimport.Summary{}, "", e
 	}
