@@ -1,3 +1,3 @@
 # ADR 0001: capas y SQLite autocontenido
 
-El dominio no depende de UI ni persistencia. Application coordina puertos; los adaptadores implementan SQLite, registro, reloj, filesystem y editor. Cada `.tasks` es SQLite con journal DELETE, claves foráneas y versión optimista. Las consultas globales abren proyectos por separado; nunca usan ATTACH.
+El dominio no depende de UI ni persistencia. Application coordina puertos; los adaptadores implementan SQLite, registro, reloj, filesystem y editor. Cada `.tasks` es SQLite con journal DELETE, claves foráneas y versión optimista. El modo global reutiliza el mismo `TaskStore` en un `global.sqlite` privado, separado del registro y no descubrible como proyecto. Las consultas globales abren cada origen por separado; nunca usan ATTACH. Un origen tipado conserva identidad, nombre y clase (`global` o `project`) para enrutar mutaciones y aplicar capacidades sin inferirlas de una ruta visible.

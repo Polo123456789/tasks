@@ -18,8 +18,8 @@ func View(task presenter.Task, selectedSubtask, width, height int) string {
 	contentHeight := max(1, height-2)
 
 	metadata := []string{fmt.Sprintf("tarea #%d", task.ID), task.Status, task.Priority}
-	if task.Project != "" {
-		metadata = append(metadata, "proyecto "+task.Project)
+	if task.Origin != "" {
+		metadata = append(metadata, "origen "+task.Origin)
 	}
 	if task.Dates != "" {
 		metadata = append(metadata, task.Dates)

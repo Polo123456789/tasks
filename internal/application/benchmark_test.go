@@ -25,7 +25,7 @@ func BenchmarkGlobalListTwentyProjects(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		service.Projects = append(service.Projects, Project{Path: path, Name: fmt.Sprintf("project-%02d", projectIndex), Store: store})
+		service.Sources = append(service.Sources, Source{Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: path, Name: fmt.Sprintf("project-%02d", projectIndex)}, Store: store})
 	}
 	defer service.Close()
 	b.ResetTimer()

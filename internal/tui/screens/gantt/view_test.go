@@ -13,7 +13,7 @@ import (
 
 func TestViewRendersIntervalsMilestonesDependenciesAndProjects(t *testing.T) {
 	tasks := []presenter.Task{
-		{Title: "Interval", Start: "2026-07-02", Due: "2026-07-05", Project: "alpha", DependencyIDs: []int64{9}},
+		{Title: "Interval", Start: "2026-07-02", Due: "2026-07-05", Origin: "alpha", DependencyIDs: []int64{9}},
 		{Title: "Start only", Start: "2026-07-10"},
 		{Title: "Due only", Due: "2026-07-12"},
 		{Title: "Recurring", Start: "2026-07-01", Recurring: true},
@@ -86,8 +86,8 @@ func TestViewClipsIntervalsToVisibleMonth(t *testing.T) {
 
 func TestViewDisambiguatesSameNamedProjects(t *testing.T) {
 	tasks := []presenter.Task{
-		{Title: "One", Due: "2026-07-01", Project: "same", Source: "/a/same.tasks"},
-		{Title: "Two", Due: "2026-07-02", Project: "same", Source: "/b/same.tasks"},
+		{Title: "One", Due: "2026-07-01", Origin: "same", Source: "/a/same.tasks"},
+		{Title: "Two", Due: "2026-07-02", Origin: "same", Source: "/b/same.tasks"},
 	}
 	view := View(tasks, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 0, 120, 20, 1)
 	if !strings.Contains(view, "/a/same.tasks") || !strings.Contains(view, "/b/same.tasks") {

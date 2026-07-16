@@ -14,13 +14,28 @@ const (
 	ModeGlobal Mode = "global"
 )
 
-type Capabilities struct{ CanCreateTask, CanCreateStatus, CanCreateDependency, CanCreateRecurrence bool }
+type OriginKind string
 
-func CapabilitiesFor(m Mode) Capabilities {
-	if m == ModeLocal {
-		return Capabilities{true, true, true, true}
-	}
-	return Capabilities{}
+const (
+	OriginGlobal    OriginKind = "global"
+	OriginProject   OriginKind = "project"
+	GlobalOriginKey            = "global"
+)
+
+type TaskOrigin struct {
+	Kind OriginKind
+	Key  string
+	Name string
+}
+
+func (o TaskOrigin) Identity() string { return string(o.Kind) + ":" + o.Key }
+
+type Capabilities struct {
+	CanCreateTask       bool
+	CanCreateStatus     bool
+	CanCreateSubtask    bool
+	CanCreateDependency bool
+	CanCreateRecurrence bool
 }
 
 type Priority int
@@ -55,7 +70,7 @@ type Status struct {
 }
 type Task struct {
 	ID                   int64
-	Project              string
+	Origin               TaskOrigin
 	Title                string
 	StatusID             int64
 	Status               Status

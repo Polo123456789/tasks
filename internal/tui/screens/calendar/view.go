@@ -28,7 +28,7 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 		cellWidth = 16
 	}
 	counts := make(map[int]int)
-	projectSources := sourcesByProject(tasks)
+	originSources := sourcesByOrigin(tasks)
 	var events []event
 	for taskIndex, task := range tasks {
 		if task.Recurring {
@@ -46,12 +46,12 @@ func View(tasks []presenter.Task, month time.Time, selected, width, height int) 
 			}
 			counts[date.Day()]++
 			label := task.Title
-			if task.Project != "" {
-				project := task.Project
-				if len(projectSources[task.Project]) > 1 {
-					project = task.Source
+			if task.Origin != "" {
+				origin := task.Origin
+				if len(originSources[task.Origin]) > 1 && task.SourceKind != domain.OriginGlobal {
+					origin = task.Source
 				}
-				label += " [" + project + "]"
+				label += " [" + origin + "]"
 			}
 			events = append(events, event{date: date, text: label, status: task.Status, statusKind: task.StatusKind, taskIndex: taskIndex})
 		}
@@ -143,13 +143,13 @@ func monthTitle(value time.Time) string {
 	return fmt.Sprintf("%s %d", months[value.Month()-1], value.Year())
 }
 
-func sourcesByProject(tasks []presenter.Task) map[string]map[string]struct{} {
+func sourcesByOrigin(tasks []presenter.Task) map[string]map[string]struct{} {
 	sources := make(map[string]map[string]struct{})
 	for _, task := range tasks {
-		if sources[task.Project] == nil {
-			sources[task.Project] = make(map[string]struct{})
+		if sources[task.Origin] == nil {
+			sources[task.Origin] = make(map[string]struct{})
 		}
-		sources[task.Project][task.Source] = struct{}{}
+		sources[task.Origin][task.Source] = struct{}{}
 	}
 	return sources
 }

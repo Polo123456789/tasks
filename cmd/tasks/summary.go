@@ -33,28 +33,29 @@ type summaryGroup struct {
 }
 
 type summaryRenderOptions struct {
-	today       domain.Date
-	width       int
-	color       bool
-	showProject bool
-	partial     bool
+	today        domain.Date
+	width        int
+	color        bool
+	showOrigin   bool
+	partial      bool
+	originLabels map[string]string
 }
 
 func writeSummary(ctx context.Context, output io.Writer, service *application.Service, today domain.Date, colorMode string, partial bool) error {
 	tasks, listErr := service.ListTasks(ctx, ports.TaskFilter{Sort: "updated"})
 	partial = partial || listErr != nil
 	if listErr != nil {
-		// A global summary remains useful when one registered project is
+		// A global summary remains useful when one registered origin is
 		// temporarily unavailable. The visible warning prevents a partial result
 		// from looking complete while keeping shell startup reliable.
 		partial = true
 	}
 	options := summaryRenderOptions{
-		today:       today,
-		width:       summaryOutputWidth(output),
-		color:       summaryColorEnabled(output, colorMode),
-		showProject: service.Mode == domain.ModeGlobal,
-		partial:     partial,
+		today:      today,
+		width:      summaryOutputWidth(output),
+		color:      summaryColorEnabled(output, colorMode),
+		showOrigin: service.Mode == domain.ModeGlobal,
+		partial:    partial,
 	}
 	_, writeErr := io.WriteString(output, renderSummary(tasks, options))
 	return writeErr
@@ -120,8 +121,8 @@ func summaryTaskLess(left, right domain.Task) bool {
 	if !left.UpdatedAt.Equal(right.UpdatedAt) {
 		return left.UpdatedAt.After(right.UpdatedAt)
 	}
-	if left.Project != right.Project {
-		return left.Project < right.Project
+	if left.Origin.Identity() != right.Origin.Identity() {
+		return left.Origin.Identity() < right.Origin.Identity()
 	}
 	return left.ID < right.ID
 }
@@ -130,6 +131,7 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 	if options.width <= 0 {
 		options.width = 80
 	}
+	options.originLabels = summaryOriginLabels(tasks)
 	groups := groupSummaryTasks(tasks, options.today)
 	nonempty := groups[:0]
 	for _, group := range groups {
@@ -218,10 +220,10 @@ func summaryHeader(today domain.Date) string {
 func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOptions) string {
 	markers := [...]string{"!", "◆", "▶"}
 	title := cleanSummaryText(task.Title)
-	if options.showProject && task.Project != "" {
-		project := cleanSummaryText(application.ProjectName(task.Project))
-		if project != "" {
-			title = "[" + project + "] " + title
+	if options.showOrigin && task.Origin.Name != "" {
+		origin := cleanSummaryText(options.originLabels[task.Origin.Identity()])
+		if origin != "" {
+			title = "[" + origin + "] " + title
 		}
 	}
 	metadata := make([]string, 0, 5)
@@ -263,6 +265,25 @@ func summaryTaskLine(task domain.Task, kind summaryKind, options summaryRenderOp
 		line += " · " + strings.Join(metadata, " · ")
 	}
 	return line
+}
+
+func summaryOriginLabels(tasks []domain.Task) map[string]string {
+	labels := make(map[string]string)
+	sources := make(map[string]map[string]struct{})
+	for _, task := range tasks {
+		if sources[task.Origin.Name] == nil {
+			sources[task.Origin.Name] = make(map[string]struct{})
+		}
+		sources[task.Origin.Name][task.Origin.Identity()] = struct{}{}
+	}
+	for _, task := range tasks {
+		label := task.Origin.Name
+		if len(sources[label]) > 1 && task.Origin.Kind == domain.OriginProject {
+			label = task.Origin.Key
+		}
+		labels[task.Origin.Identity()] = label
+	}
+	return labels
 }
 
 func summaryDate(value, today domain.Date) string {

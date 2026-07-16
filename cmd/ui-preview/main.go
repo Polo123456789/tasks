@@ -17,8 +17,13 @@ type fake struct {
 	mode    domain.Mode
 }
 
-func (f fake) Mode() domain.Mode                 { return f.mode }
-func (f fake) Capabilities() domain.Capabilities { return domain.CapabilitiesFor(f.mode) }
+func (f fake) Mode() domain.Mode { return f.mode }
+func (f fake) Capabilities(source string) domain.Capabilities {
+	if f.mode == domain.ModeLocal || source == domain.GlobalOriginKey || source == "" {
+		return domain.Capabilities{CanCreateTask: true, CanCreateStatus: f.mode == domain.ModeLocal, CanCreateSubtask: true, CanCreateDependency: true, CanCreateRecurrence: true}
+	}
+	return domain.Capabilities{}
+}
 func (f fake) ContextLabel() string {
 	if f.mode == domain.ModeGlobal {
 		return "Global · vista previa"
@@ -73,9 +78,9 @@ func (f fake) List(ctx context.Context, filter ports.TaskFilter) ([]domain.Task,
 	if f.mode == domain.ModeGlobal {
 		for index := range tasks {
 			if index%2 == 0 {
-				tasks[index].Project = "/workspace/alpha.tasks"
+				tasks[index].Origin = domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"}
 			} else {
-				tasks[index].Project = "/other/alpha.tasks"
+				tasks[index].Origin = domain.TaskOrigin{Kind: domain.OriginProject, Key: "/other/alpha.tasks", Name: "alpha"}
 			}
 		}
 	}

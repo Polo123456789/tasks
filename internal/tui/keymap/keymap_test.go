@@ -14,7 +14,7 @@ func TestFooterChangesWithScreenAndSelection(t *testing.T) {
 	}{
 		{
 			name:    "empty task view",
-			context: Context{View: 0},
+			context: Context{View: 0, CanCreateTask: true},
 			want:    []string{"n nueva tarea", "/ título", "F1 mapa general"},
 			reject:  []string{"e título", "d papelera", "Subtarea"},
 		},

@@ -17,7 +17,7 @@ type Registry interface {
 	Close() error
 }
 type TaskFilter struct {
-	Query, Markdown, Project                                                  string
+	Query, Markdown, Origin                                                   string
 	StatusIDs                                                                 []int64
 	StatusNames                                                               []string
 	Priorities                                                                []domain.Priority

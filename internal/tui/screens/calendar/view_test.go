@@ -10,7 +10,7 @@ import (
 
 func TestViewRendersMonthEventsAndExcludesRecurring(t *testing.T) {
 	tasks := []presenter.Task{
-		{Title: "Interval", Start: "2026-07-02", Due: "2026-07-05", Project: "alpha"},
+		{Title: "Interval", Start: "2026-07-02", Due: "2026-07-05", Origin: "alpha"},
 		{Title: "Milestone", Due: "2026-07-15"},
 		{Title: "Recurring", Due: "2026-07-16", Recurring: true},
 		{Title: "Other month", Due: "2026-08-01"},
@@ -37,8 +37,8 @@ func TestViewDegradesAtSmallWidth(t *testing.T) {
 
 func TestViewDisambiguatesSameNamedProjects(t *testing.T) {
 	tasks := []presenter.Task{
-		{Title: "One", Due: "2026-07-01", Project: "same", Source: "/a/same.tasks"},
-		{Title: "Two", Due: "2026-07-02", Project: "same", Source: "/b/same.tasks"},
+		{Title: "One", Due: "2026-07-01", Origin: "same", Source: "/a/same.tasks"},
+		{Title: "Two", Due: "2026-07-02", Origin: "same", Source: "/b/same.tasks"},
 	}
 	view := View(tasks, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 0, 100, 20)
 	if !strings.Contains(view, "/a/same.tasks") || !strings.Contains(view, "/b/same.tasks") {

@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Aplicación TUI para gestionar tareas desde la terminal. Cada proyecto almacena sus datos en un único archivo con extensión `.tasks`.
+Aplicación TUI para gestionar tareas desde la terminal. Cada proyecto almacena sus datos en un único archivo con extensión `.tasks`; el modo global dispone además de un almacén interno para tareas sin proyecto.
 
 La aplicación opera automáticamente en modo **local** o **global** según el directorio desde el que se ejecute.
 
@@ -48,7 +48,7 @@ La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `impo
 
 `tasks summary [--color=auto|always|never]` genera una salida compacta para banners de inicio de shell:
 
-- Usa modo local dentro de un proyecto y agrega proyectos registrados en modo global.
+- Usa modo local dentro de un proyecto y agrega el origen propio `Global` y los proyectos registrados en modo global.
 - Excluye tareas finalizadas, canceladas, eliminadas y pendientes sin fecha.
 - Separa, sin duplicar, tareas atrasadas, tareas correspondientes a hoy y otras tareas en estados activos.
 - Considera atrasada una tarea cuyo vencimiento es anterior a hoy.
@@ -57,7 +57,7 @@ La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `impo
 - Prioriza vencimientos más antiguos y luego prioridades más altas.
 - Nunca ocupa más de 20 filas y trunca líneas al ancho disponible.
 - El color es automático para terminales, respeta `NO_COLOR` y puede forzarse o desactivarse. `--no-color` equivale a `--color=never`.
-- En global, una falla parcial se muestra como advertencia sin ocultar los proyectos disponibles.
+- En global, una falla parcial se muestra como advertencia sin ocultar los demás orígenes disponibles.
 
 ## 3. Creación de proyectos
 
@@ -130,7 +130,7 @@ Permite:
 
 Se activa cuando no se encuentra un archivo `.tasks`.
 
-Agrega los datos de todos los proyectos registrados.
+Agrega sus tareas propias, identificadas con el origen `Global`, y los datos de todos los proyectos registrados.
 
 ### Vistas
 
@@ -139,16 +139,16 @@ Agrega los datos de todos los proyectos registrados.
 - Tabla.
 - No incluye Kanban.
 
-### Restricciones
+### Creación y restricciones
 
-No permite ningún tipo de creación:
+`n` crea siempre una tarea propia del origen `Global`; no existe selector ni API para crear una tarea dentro de un proyecto registrado. Las tareas globales pueden crear subtareas, recurrencias y dependencias con otras tareas globales.
 
-- Tareas.
-- Subtareas.
-- Proyectos.
-- Estados.
-- Dependencias.
-- Reglas de recurrencia.
+No permite:
+
+- Crear tareas, subtareas, dependencias o recurrencias dentro de proyectos registrados.
+- Crear proyectos desde la TUI.
+- Crear o administrar estados globales; usa los estados predeterminados.
+- Crear dependencias entre orígenes.
 
 Sí permite operar sobre elementos existentes:
 
@@ -160,7 +160,9 @@ Sí permite operar sobre elementos existentes:
 - Editar documentación.
 - Enviar a la papelera y restaurar.
 
-Cada modificación se escribe directamente en la base del proyecto correspondiente.
+Cada modificación se escribe directamente en el almacén de su origen.
+
+Las tareas propias solo son visibles en modo global y en `tasks summary` ejecutado fuera de un proyecto. El almacén se guarda como `global.sqlite` dentro del directorio de configuración de `tasks`, no se registra como proyecto y una falla al abrirlo produce resultados parciales sin ocultar proyectos disponibles.
 
 ### Visibilidad predeterminada
 
@@ -179,7 +181,7 @@ Al entrar en modo global:
 - La eliminación es silenciosa.
 - Si el proyecto reaparece, deberá abrirse nuevamente para registrarlo.
 
-Los proyectos son unidades independientes. No existen relaciones entre proyectos.
+Los proyectos y el origen `Global` son unidades independientes. No existen relaciones entre orígenes.
 
 ## 7. Modelo de tarea
 
@@ -260,7 +262,7 @@ No puede tener fechas, prioridad, documentación, dependencias, recurrencia ni o
 
 ## 10. Dependencias
 
-Una tarea puede depender de una o varias tareas del mismo proyecto.
+Una tarea puede depender de una o varias tareas del mismo origen.
 
 - No se permiten ciclos directos ni indirectos.
 - Una tarea queda bloqueada automáticamente mientras alguna dependencia no esté `Finalizada`.
@@ -393,19 +395,19 @@ Si la tarea participa en dependencias:
 - Muestra tareas normales con fechas.
 - Representa intervalos, hitos y dependencias.
 - Excluye tareas recurrentes y tareas sin fechas.
-- En global, agrupa o identifica cada tarea por proyecto.
+- En global, agrupa o identifica cada tarea por origen.
 
 ### Calendario
 
 - Muestra tareas normales con fecha de inicio o vencimiento.
 - Excluye tareas recurrentes.
-- En global, identifica visualmente el proyecto.
+- En global, identifica visualmente el origen.
 
 ### Tabla
 
 Puede mostrar:
 
-- Proyecto, en modo global.
+- Origen, en modo global.
 - Título.
 - Estado.
 - Prioridad.
@@ -426,7 +428,7 @@ Todas las vistas admitirán, cuando resulte aplicable:
 
 ### Filtros
 
-- Proyecto, en modo global.
+- Origen, en modo global.
 - Estado.
 - Prioridad.
 - Rango de fechas.
@@ -470,18 +472,19 @@ El historial pertenece a la tarea y no podrá editarse manualmente.
 - Compatibilidad inicial con Linux y macOS.
 - Archivo `.tasks` portable y autocontenido.
 - El índice global no contiene copias de tareas, solamente rutas.
+- El almacén interno `global.sqlite` contiene exclusivamente tareas sin proyecto y no participa en el descubrimiento ni en el registro.
 
 ## 19. Fuera del alcance inicial
 
 - Sincronización remota.
 - Colaboración multiusuario.
-- Dependencias entre proyectos.
+- Dependencias entre orígenes.
 - Etiquetas.
 - Archivos adjuntos.
 - Subtareas anidadas.
 - Horas, zonas horarias o recordatorios por hora.
 - Expresiones cron.
-- Creación de elementos desde el modo global.
+- Creación de elementos dentro de proyectos desde el modo global.
 - Notificaciones del sistema.
 - Kanban global.
 - Mezcla o reimportación sobre un proyecto existente.

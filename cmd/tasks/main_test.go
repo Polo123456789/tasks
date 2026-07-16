@@ -89,9 +89,10 @@ func TestMarkdownConflictPreservesEditedTemporaryFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &application.Service{Mode: domain.ModeLocal, Clock: fixedClock{now: time.Now()}, Projects: []application.Project{{Path: projectPath, Store: store}}}
+	origin := domain.TaskOrigin{Kind: domain.OriginProject, Key: projectPath, Name: "project"}
+	service := &application.Service{Mode: domain.ModeLocal, Clock: fixedClock{now: time.Now()}, Sources: []application.Source{{Origin: origin, Store: store}}, WritableSource: projectPath}
 	defer service.Close()
-	task, err := service.CreateTask(context.Background(), projectPath, domain.Task{Title: "original", Markdown: "before"})
+	task, err := service.CreateTask(context.Background(), domain.Task{Title: "original", Markdown: "before"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +148,37 @@ func TestCreateProjectIsExclusiveAndPortable(t *testing.T) {
 	}
 }
 
+func TestGlobalStoreIsPrivateAndPersistent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config", "tasks", "global.sqlite")
+	store, err := openGlobalStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateTask(context.Background(), domain.Task{Title: "global persistente"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("global store permissions=%o", info.Mode().Perm())
+	}
+	store, err = openGlobalStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	persisted, err := store.Task(context.Background(), created.ID)
+	if err != nil || persisted.Title != created.Title {
+		t.Fatalf("persisted=%#v err=%v", persisted, err)
+	}
+}
+
 func TestAIPromptWritesStandaloneInstructions(t *testing.T) {
 	var output bytes.Buffer
 	if err := runArgs([]string{"ai-prompt"}, strings.NewReader(""), &output); err != nil {
@@ -181,7 +213,8 @@ func TestSummaryCommandRendersLocalProjectWithoutOpeningTUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	config := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
 	var output bytes.Buffer
 	if err = runArgs([]string{"summary", "--color=always"}, strings.NewReader(""), &output); err != nil {
 		t.Fatal(err)
@@ -197,6 +230,9 @@ func TestSummaryCommandRendersLocalProjectWithoutOpeningTUI(t *testing.T) {
 	}
 	if strings.Contains(plain, "[project]") || len(strings.Split(strings.TrimSuffix(plain, "\n"), "\n")) > summaryMaxLines {
 		t.Fatalf("local summary context or height is wrong:\n%s", plain)
+	}
+	if _, err = os.Stat(filepath.Join(config, "tasks", "global.sqlite")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("local summary created global store: %v", err)
 	}
 }
 
@@ -238,6 +274,9 @@ func TestSummaryCommandUsesRegisteredProjectsInGlobalMode(t *testing.T) {
 	if err = registry.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err = os.WriteFile(filepath.Join(config, "tasks", "global.sqlite"), []byte("not sqlite"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	emptyDirectory := filepath.Join(root, "home")
 	if err = os.Mkdir(emptyDirectory, 0700); err != nil {
 		t.Fatal(err)
@@ -262,6 +301,67 @@ func TestSummaryCommandUsesRegisteredProjectsInGlobalMode(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "\x1b[") {
 		t.Fatalf("--no-color emitted ANSI: %q", output.String())
+	}
+}
+
+func TestSummaryIncludesGlobalTasksOnlyOutsideProjects(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	globalStore, err := openGlobalStore(filepath.Join(config, "tasks", "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := domain.DateFromTime(time.Now())
+	if _, err = globalStore.CreateTask(context.Background(), domain.Task{Title: "Pendiente personal", Due: &today}); err != nil {
+		t.Fatal(err)
+	}
+	if err = globalStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	emptyDirectory := filepath.Join(root, "outside")
+	projectDirectory := filepath.Join(root, "project")
+	if err = os.MkdirAll(emptyDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(projectDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(projectDirectory, "local.tasks")
+	projectStore, err := db.Open(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = projectStore.CreateTask(context.Background(), domain.Task{Title: "Pendiente local", Due: &today}); err != nil {
+		t.Fatal(err)
+	}
+	if err = projectStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDirectory) })
+	t.Setenv("XDG_CONFIG_HOME", config)
+	if err = os.Chdir(emptyDirectory); err != nil {
+		t.Fatal(err)
+	}
+	var globalOutput bytes.Buffer
+	if err = runArgs([]string{"summary", "--no-color"}, strings.NewReader(""), &globalOutput); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(globalOutput.String(), "[Global] Pendiente personal") {
+		t.Fatalf("global summary missing own task:\n%s", globalOutput.String())
+	}
+	if err = os.Chdir(projectDirectory); err != nil {
+		t.Fatal(err)
+	}
+	var localOutput bytes.Buffer
+	if err = runArgs([]string{"summary", "--no-color"}, strings.NewReader(""), &localOutput); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(localOutput.String(), "Pendiente local") || strings.Contains(localOutput.String(), "Pendiente personal") {
+		t.Fatalf("local summary leaked global tasks:\n%s", localOutput.String())
 	}
 }
 

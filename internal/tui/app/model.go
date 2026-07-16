@@ -30,7 +30,7 @@ type Backend interface {
 	ContextLabel() string
 	Today() domain.Date
 	Maintain(context.Context) error
-	Capabilities() domain.Capabilities
+	Capabilities(string) domain.Capabilities
 	List(context.Context, ports.TaskFilter) ([]domain.Task, error)
 	Statuses(context.Context) ([]domain.Status, error)
 	Create(context.Context, string) (domain.Task, error)
@@ -190,7 +190,6 @@ func (m Model) loadDetail() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		detail, e := m.backend.Detail(ctx, task.Source, task.ID)
-		detail.Project = task.Source
 		return detailLoaded{task: detail, err: e}
 	}
 }
@@ -201,8 +200,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loaded:
 		m.loading = false
 		m.err = v.err
-		if v.err != nil && len(v.tasks) > 0 {
-			m.notice = "Algunos proyectos no están disponibles: " + v.err.Error()
+		if v.err != nil && (len(v.tasks) > 0 || m.backend.Mode() == domain.ModeGlobal) {
+			m.notice = "Algunos orígenes no están disponibles: " + v.err.Error()
 			m.err = nil
 		}
 		if v.trash {
@@ -281,7 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = v.err
 			break
 		}
-		if m.selected < len(m.tasks) && m.tasks[m.selected].ID == v.task.ID && m.tasks[m.selected].Source == v.task.Project {
+		if m.selected < len(m.tasks) && m.tasks[m.selected].ID == v.task.ID && m.tasks[m.selected].Source == v.task.Origin.Key {
 			m.detail = &v.task
 			if len(v.task.Subtasks) == 0 {
 				m.selectedSubtask = 0
@@ -472,7 +471,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputAction, m.input = "filter-markdown", m.filter.Markdown
 			case "P":
 				if m.backend.Mode() == domain.ModeGlobal {
-					m.inputAction, m.input = "filter-project", m.filter.Project
+					m.inputAction, m.input = "filter-origin", m.filter.Origin
 				} else {
 					m.inputMode = false
 				}
@@ -546,12 +545,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNameFilter = ""
 			return m.reloadFiltered("Filtros restablecidos")
 		case "n":
-			if m.backend.Capabilities().CanCreateTask {
+			if m.backend.Capabilities("").CanCreateTask {
 				m.inputMode = true
 				m.inputAction = "create"
 				m.input = ""
 			} else {
-				m.notice = "Modo global: no se pueden crear tareas"
+				m.notice = "El origen global no está disponible para crear tareas"
 			}
 		case "e":
 			if m.view == 5 && m.selected < len(m.statuses) && m.statuses[m.selected].Kind == domain.StatusNormal {
@@ -564,16 +563,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = m.tasks[m.selected].Title
 			}
 		case "a":
-			if m.view == 5 && m.backend.Capabilities().CanCreateStatus {
+			if m.view == 5 && m.backend.Capabilities("").CanCreateStatus {
 				m.inputMode = true
 				m.inputAction = "create-status"
 				m.input = ""
-			} else if m.backend.Capabilities().CanCreateTask && m.hasSelectedTask() {
+			} else if m.hasSelectedTask() && m.backend.Capabilities(m.tasks[m.selected].Source).CanCreateSubtask {
 				m.inputMode = true
 				m.inputAction = "add-subtask"
 				m.input = ""
 			} else if m.backend.Mode() == domain.ModeGlobal {
-				m.notice = "Modo global: no se pueden crear subtareas"
+				m.notice = "No se pueden añadir subtareas a una tarea de proyecto desde global"
 			}
 		case "E":
 			if m.detail != nil && m.selectedSubtask < len(m.detail.Subtasks) {
@@ -608,10 +607,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "g":
-			if m.backend.Capabilities().CanCreateDependency && m.hasSelectedTask() {
+			if m.hasSelectedTask() && m.backend.Capabilities(m.tasks[m.selected].Source).CanCreateDependency {
 				return m, m.loadDependencyPicker("add-dependency", false)
 			} else if m.backend.Mode() == domain.ModeGlobal {
-				m.notice = "Modo global: no se pueden crear dependencias"
+				m.notice = "No se pueden añadir dependencias a una tarea de proyecto desde global"
 			}
 		case "G":
 			if m.hasSelectedTask() {
@@ -620,8 +619,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if m.hasSelectedTask() {
 				task := m.tasks[m.selected]
-				if m.backend.Mode() == domain.ModeGlobal && task.Recurrence == "" {
-					m.notice = "Modo global: no se pueden crear reglas de recurrencia"
+				if task.Recurrence == "" && !m.backend.Capabilities(task.Source).CanCreateRecurrence {
+					m.notice = "No se puede añadir recurrencia a una tarea de proyecto desde global"
 					break
 				}
 				m.openPicker("recurrence-kind", task, []pickerOption{
@@ -1171,8 +1170,8 @@ func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.filter.Query = title
 			case "filter-markdown":
 				m.filter.Markdown = title
-			case "filter-project":
-				m.filter.Project = title
+			case "filter-origin":
+				m.filter.Origin = title
 			case "filter-status-name":
 				m.statusNameFilter = title
 				m.filter.StatusNames = nil
@@ -1355,12 +1354,12 @@ func (m Model) View() string {
 		}
 		if m.hasSelectedTask() {
 			detail := m.tasks[m.selected]
-			if m.detail != nil && m.detail.ID == detail.ID && m.detail.Project == detail.Source {
+			if m.detail != nil && m.detail.ID == detail.ID && m.detail.Origin.Key == detail.Source {
 				detail = presenter.Tasks([]domain.Task{*m.detail})[0]
 			}
 			for _, other := range m.tasks {
-				if other.Project == detail.Project && other.Source != detail.Source {
-					detail.Project = detail.Source
+				if other.Origin == detail.Origin && other.Source != detail.Source && detail.SourceKind == domain.OriginProject {
+					detail.Origin = detail.Source
 					break
 				}
 			}
@@ -1403,15 +1402,21 @@ func (m Model) footerContent() string {
 		return fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
 	}
 
+	contextCapabilities := m.backend.Capabilities("")
 	context := keymap.Context{
-		View:       m.view,
-		Global:     m.backend.Mode() == domain.ModeGlobal,
-		HasTask:    m.hasSelectedTask(),
-		HasSubtask: m.detail != nil && len(m.detail.Subtasks) > 0,
+		View:          m.view,
+		Global:        m.backend.Mode() == domain.ModeGlobal,
+		HasTask:       m.hasSelectedTask(),
+		HasSubtask:    m.detail != nil && len(m.detail.Subtasks) > 0,
+		CanCreateTask: contextCapabilities.CanCreateTask,
 	}
 	if context.HasTask {
+		taskCapabilities := m.backend.Capabilities(m.tasks[m.selected].Source)
 		context.Recurring = m.tasks[m.selected].Recurring
 		context.HasDependency = m.tasks[m.selected].Dependencies > 0
+		context.CanCreateSubtask = taskCapabilities.CanCreateSubtask
+		context.CanCreateDependency = taskCapabilities.CanCreateDependency
+		context.CanCreateRecurrence = taskCapabilities.CanCreateRecurrence
 	}
 	if m.view == 4 {
 		context.HasTask = m.selected >= 0 && m.selected < len(m.deleted)
@@ -1437,7 +1442,7 @@ func (m Model) inputLabel() string {
 		"due":                "Vencimiento (AAAA-MM-DD; vacío elimina)",
 		"filter-title":       "Buscar en título (vacío limpia)",
 		"filter-markdown":    "Buscar en Markdown (vacío limpia)",
-		"filter-project":     "Proyecto por nombre o ruta (vacío limpia)",
+		"filter-origin":      "Origen por nombre o ruta (vacío limpia)",
 		"filter-status-name": "Nombre exacto del estado (vacío limpia)",
 		"filter-dates":       "Rango AAAA-MM-DD..AAAA-MM-DD (extremos opcionales)",
 		"create-status":      "Nombre del nuevo estado",
@@ -1524,8 +1529,8 @@ func (m Model) filterSummary() string {
 	if m.filter.Markdown != "" {
 		active = append(active, "markdown="+m.filter.Markdown)
 	}
-	if m.filter.Project != "" {
-		active = append(active, "proyecto="+m.filter.Project)
+	if m.filter.Origin != "" {
+		active = append(active, "origen="+m.filter.Origin)
 	}
 	if len(m.filter.StatusIDs) > 0 {
 		active = append(active, fmt.Sprintf("estado=%d", m.filter.StatusIDs[0]))

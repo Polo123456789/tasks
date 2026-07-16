@@ -83,14 +83,14 @@ func TestSummaryUsesProjectContextMetadataAndSanitizesLines(t *testing.T) {
 	due := today.AddDays(-2)
 	task := domain.Task{
 		ID:       1,
-		Project:  "/work/backend.tasks",
+		Origin:   domain.TaskOrigin{Kind: domain.OriginProject, Key: "/work/backend.tasks", Name: "backend"},
 		Title:    "Arreglar\nrespaldo\tnocturno",
 		Status:   domain.Status{Name: "En progreso", Kind: domain.StatusNormal},
 		Priority: domain.PriorityUrgent,
 		Due:      &due,
 		Blocked:  true,
 	}
-	global := renderSummary([]domain.Task{task}, summaryRenderOptions{today: today, width: 100, showProject: true})
+	global := renderSummary([]domain.Task{task}, summaryRenderOptions{today: today, width: 100, showOrigin: true})
 	for _, text := range []string{"[backend]", "Arreglar respaldo nocturno", "bloqueada", "urgente", "venció 14 jul"} {
 		if !strings.Contains(global, text) {
 			t.Fatalf("global summary missing %q:\n%s", text, global)
@@ -102,6 +102,20 @@ func TestSummaryUsesProjectContextMetadataAndSanitizesLines(t *testing.T) {
 	local := renderSummary([]domain.Task{task}, summaryRenderOptions{today: today, width: 100})
 	if strings.Contains(local, "[backend]") {
 		t.Fatalf("local summary showed redundant project:\n%s", local)
+	}
+}
+
+func TestSummaryDisambiguatesGlobalFromSameNamedProject(t *testing.T) {
+	today, _ := domain.ParseDate("2026-07-16")
+	tasks := []domain.Task{
+		{ID: 1, Title: "Own", Due: &today, Origin: domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"}},
+		{ID: 1, Title: "Project", Due: &today, Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/work/Global.tasks", Name: "Global"}},
+	}
+	rendered := renderSummary(tasks, summaryRenderOptions{today: today, width: 120, showOrigin: true})
+	for _, expected := range []string{"[Global] Own", "[/work/Global.tasks] Project"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("summary missing %q:\n%s", expected, rendered)
+		}
 	}
 }
 

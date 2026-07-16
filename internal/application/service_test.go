@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +17,10 @@ type fixedClock struct{ today domain.Date }
 func (c fixedClock) Today() domain.Date { return c.today }
 func (c fixedClock) Now() time.Time     { return c.today.Time() }
 
+func testSource(kind domain.OriginKind, key, name string, store ports.TaskStore) Source {
+	return Source{Origin: domain.TaskOrigin{Kind: kind, Key: key, Name: name}, Store: store}
+}
+
 func TestCreateRecurringTaskSetsAnchorFromClock(t *testing.T) {
 	store, err := db.Open(filepath.Join(t.TempDir(), "project.tasks"))
 	if err != nil {
@@ -24,12 +29,13 @@ func TestCreateRecurringTaskSetsAnchorFromClock(t *testing.T) {
 	defer store.Close()
 	today, _ := domain.ParseDate("2026-07-15")
 	service := Service{
-		Mode:     domain.ModeLocal,
-		Clock:    fixedClock{today: today},
-		Projects: []Project{{Path: "project.tasks", Store: store}},
+		Mode:           domain.ModeLocal,
+		Clock:          fixedClock{today: today},
+		Sources:        []Source{testSource(domain.OriginProject, "project.tasks", "project", store)},
+		WritableSource: "project.tasks",
 	}
 	recurrence := domain.Recurrence{Kind: domain.Daily}
-	task, err := service.CreateTask(context.Background(), "", domain.Task{Title: "daily", Recurrence: &recurrence})
+	task, err := service.CreateTask(context.Background(), domain.Task{Title: "daily", Recurrence: &recurrence})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,13 +44,64 @@ func TestCreateRecurringTaskSetsAnchorFromClock(t *testing.T) {
 	}
 }
 
-func TestGlobalModeRejectsRecurringTaskCreation(t *testing.T) {
+func TestGlobalModeCreatesCompleteTasksOnlyInGlobalSource(t *testing.T) {
+	globalStore, err := db.Open(filepath.Join(t.TempDir(), "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer globalStore.Close()
+	projectStore, err := db.Open(filepath.Join(t.TempDir(), "project.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projectStore.Close()
 	today, _ := domain.ParseDate("2026-07-15")
-	service := Service{Mode: domain.ModeGlobal, Clock: fixedClock{today: today}}
+	service := Service{
+		Mode:           domain.ModeGlobal,
+		Clock:          fixedClock{today: today},
+		WritableSource: domain.GlobalOriginKey,
+		Sources: []Source{
+			testSource(domain.OriginGlobal, domain.GlobalOriginKey, "Global", globalStore),
+			testSource(domain.OriginProject, "project.tasks", "project", projectStore),
+		},
+	}
 	recurrence := domain.Recurrence{Kind: domain.Daily}
-	_, err := service.CreateTask(context.Background(), "project.tasks", domain.Task{Title: "daily", Recurrence: &recurrence})
-	if err != domain.ErrForbidden {
-		t.Fatalf("got %v, want forbidden", err)
+	created, err := service.CreateTask(context.Background(), domain.Task{Title: "daily", Recurrence: &recurrence})
+	if err != nil || created.Origin.Kind != domain.OriginGlobal {
+		t.Fatalf("created=%#v err=%v", created, err)
+	}
+	plain, err := service.CreateTask(context.Background(), domain.Task{Title: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AddSubtask(context.Background(), domain.GlobalOriginKey, created.ID, created.Version, "child"); err != nil {
+		t.Fatalf("global subtask: %v", err)
+	}
+	created, _ = service.Task(context.Background(), domain.GlobalOriginKey, created.ID)
+	if err = service.AddDependency(context.Background(), domain.GlobalOriginKey, created.ID, plain.ID, created.Version); err != nil {
+		t.Fatalf("global dependency: %v", err)
+	}
+	projectTask, _ := projectStore.CreateTask(context.Background(), domain.Task{Title: "project"})
+	if _, err = service.AddSubtask(context.Background(), "project.tasks", projectTask.ID, projectTask.Version, "forbidden"); err != domain.ErrForbidden {
+		t.Fatalf("project subtask: got %v, want forbidden", err)
+	}
+}
+
+func TestUnavailableGlobalSourceDisablesCreationAndReturnsItsError(t *testing.T) {
+	unavailable := errors.New("global store unavailable")
+	service := Service{
+		Mode:           domain.ModeGlobal,
+		WritableSource: domain.GlobalOriginKey,
+		Sources: []Source{{
+			Origin: domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"},
+			Err:    unavailable,
+		}},
+	}
+	if service.Capabilities("").CanCreateTask {
+		t.Fatal("creation remained enabled for an unavailable global source")
+	}
+	if _, err := service.CreateTask(context.Background(), domain.Task{Title: "blocked"}); !errors.Is(err, unavailable) {
+		t.Fatalf("create error=%v", err)
 	}
 }
 
@@ -59,7 +116,7 @@ func TestGlobalModeCanModifyExistingRecurrenceButNotAddOne(t *testing.T) {
 	recurring, _ := store.CreateTask(context.Background(), domain.Task{Title: "recurring", Recurrence: &daily, RecurrenceAnchor: &today})
 	plain, _ := store.CreateTask(context.Background(), domain.Task{Title: "plain"})
 	path := "/project.tasks"
-	service := Service{Mode: domain.ModeGlobal, Clock: fixedClock{today}, Projects: []Project{{Path: path, Store: store}}}
+	service := Service{Mode: domain.ModeGlobal, Clock: fixedClock{today}, Sources: []Source{testSource(domain.OriginProject, path, "project", store)}, WritableSource: domain.GlobalOriginKey}
 	weekly := domain.Recurrence{Kind: domain.Weekly, Weekdays: []time.Weekday{time.Monday}}
 	updated, err := service.UpdateTaskRecurrence(context.Background(), path, recurring.ID, recurring.Version, &weekly)
 	if err != nil || updated.Recurrence == nil || updated.Recurrence.Kind != domain.Weekly {
@@ -99,7 +156,7 @@ func TestMoveSubtaskAcrossProjectStatuses(t *testing.T) {
 	task, _ := store.CreateTask(context.Background(), domain.Task{Title: "parent"})
 	subtask, _ := store.AddSubtask(context.Background(), task.ID, task.Version, "child")
 	task, _ = store.Task(context.Background(), task.ID)
-	service := Service{Mode: domain.ModeLocal, Projects: []Project{{Path: "project.tasks", Store: store}}}
+	service := Service{Mode: domain.ModeLocal, Sources: []Source{testSource(domain.OriginProject, "project.tasks", "project", store)}, WritableSource: "project.tasks"}
 	if err = service.MoveSubtaskStatus(context.Background(), "", task.ID, subtask.ID, task.Version, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -123,13 +180,13 @@ func TestListTasksFiltersProjectsByPathOrName(t *testing.T) {
 		return store
 	}
 	firstPath := "/projects/first.tasks"
-	service := Service{Mode: domain.ModeGlobal, Projects: []Project{
-		{Path: firstPath, Name: "first", Store: open("first", "one")},
-		{Path: "/other/second.tasks", Name: "second", Store: open("second", "two")},
+	service := Service{Mode: domain.ModeGlobal, Sources: []Source{
+		testSource(domain.OriginProject, firstPath, "first", open("first", "one")),
+		testSource(domain.OriginProject, "/other/second.tasks", "second", open("second", "two")),
 	}}
 	for _, filter := range []string{firstPath, "first"} {
-		got, err := service.ListTasks(context.Background(), ports.TaskFilter{Project: filter})
-		if err != nil || len(got) != 1 || got[0].Title != "one" || got[0].Project != firstPath {
+		got, err := service.ListTasks(context.Background(), ports.TaskFilter{Origin: filter})
+		if err != nil || len(got) != 1 || got[0].Title != "one" || got[0].Origin.Key != firstPath {
 			t.Fatalf("filter %q: %#v %v", filter, got, err)
 		}
 	}
@@ -152,9 +209,9 @@ func TestGlobalMutationTargetsProjectPathWithDuplicateNamesAndIDs(t *testing.T) 
 	firstStore, firstTask := first("first.tasks")
 	secondStore, secondTask := first("second.tasks")
 	firstPath, secondPath := "/a/same.tasks", "/b/same.tasks"
-	service := Service{Mode: domain.ModeGlobal, Projects: []Project{
-		{Path: firstPath, Name: "same", Store: firstStore},
-		{Path: secondPath, Name: "same", Store: secondStore},
+	service := Service{Mode: domain.ModeGlobal, Sources: []Source{
+		testSource(domain.OriginProject, firstPath, "same", firstStore),
+		testSource(domain.OriginProject, secondPath, "same", secondStore),
 	}}
 	if firstTask.ID != secondTask.ID {
 		t.Fatal("fixture did not produce duplicate IDs")
@@ -187,9 +244,9 @@ func TestAggregatedSortingHonorsRequestedOrder(t *testing.T) {
 	}
 	early, _ := domain.ParseDate("2026-01-01")
 	late, _ := domain.ParseDate("2026-02-01")
-	service := Service{Mode: domain.ModeGlobal, Projects: []Project{
-		{Path: "/z.tasks", Store: open("z", []domain.Task{{Title: "Zulu", Priority: domain.PriorityLow, Due: &late}})},
-		{Path: "/a.tasks", Store: open("a", []domain.Task{{Title: "Alpha", Priority: domain.PriorityUrgent, Due: &early}})},
+	service := Service{Mode: domain.ModeGlobal, Sources: []Source{
+		testSource(domain.OriginProject, "/z.tasks", "z", open("z", []domain.Task{{Title: "Zulu", Priority: domain.PriorityLow, Due: &late}})),
+		testSource(domain.OriginProject, "/a.tasks", "a", open("a", []domain.Task{{Title: "Alpha", Priority: domain.PriorityUrgent, Due: &early}})),
 	}}
 	cases := []struct {
 		sort, first string
@@ -212,7 +269,7 @@ func TestSetTaskLifecycleJumpsDirectlyToSpecialAndInitialStatuses(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Mode: domain.ModeLocal, Projects: []Project{{Path: "project.tasks", Store: store}}}
+	service := Service{Mode: domain.ModeLocal, Sources: []Source{testSource(domain.OriginProject, "project.tasks", "project", store)}, WritableSource: "project.tasks"}
 	completed, err := service.SetTaskLifecycle(context.Background(), "", task.ID, task.Version, "complete")
 	if err != nil || completed.Status.Kind != domain.StatusDone {
 		t.Fatalf("complete=%#v err=%v", completed, err)
@@ -236,7 +293,7 @@ func TestDependencyCandidatesIgnoreViewFiltersAndNameExistingChoices(t *testing.
 	parent, _ := store.CreateTask(context.Background(), domain.Task{Title: "parent"})
 	first, _ := store.CreateTask(context.Background(), domain.Task{Title: "first"})
 	second, _ := store.CreateTask(context.Background(), domain.Task{Title: "second"})
-	service := Service{Mode: domain.ModeLocal, Projects: []Project{{Path: "project.tasks", Store: store}}}
+	service := Service{Mode: domain.ModeLocal, Sources: []Source{testSource(domain.OriginProject, "project.tasks", "project", store)}, WritableSource: "project.tasks"}
 	choices, err := service.DependencyCandidates(context.Background(), "", parent.ID, false)
 	if err != nil || len(choices) != 2 {
 		t.Fatalf("choices=%#v err=%v", choices, err)

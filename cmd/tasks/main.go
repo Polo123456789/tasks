@@ -27,8 +27,10 @@ type backend struct {
 	path string
 }
 
-func (b backend) Mode() domain.Mode                 { return b.svc.Mode }
-func (b backend) Capabilities() domain.Capabilities { return b.svc.Capabilities() }
+func (b backend) Mode() domain.Mode { return b.svc.Mode }
+func (b backend) Capabilities(source string) domain.Capabilities {
+	return b.svc.Capabilities(source)
+}
 func (b backend) ContextLabel() string {
 	if b.svc.Mode == domain.ModeGlobal {
 		return "Global"
@@ -41,13 +43,13 @@ func (b backend) List(c context.Context, f ports.TaskFilter) ([]domain.Task, err
 	return b.svc.ListTasks(c, f)
 }
 func (b backend) Statuses(c context.Context) ([]domain.Status, error) {
-	if len(b.svc.Projects) == 1 {
-		return b.svc.Projects[0].Store.Statuses(c)
+	if b.svc.Mode == domain.ModeLocal && len(b.svc.Sources) == 1 {
+		return b.svc.Sources[0].Store.Statuses(c)
 	}
 	return nil, nil
 }
 func (b backend) Create(c context.Context, title string) (domain.Task, error) {
-	return b.svc.CreateTask(c, b.path, domain.Task{Title: title})
+	return b.svc.CreateTask(c, domain.Task{Title: title})
 }
 func (b backend) UpdateTitle(c context.Context, path string, id, version int64, title string) (domain.Task, error) {
 	if path == "" {
@@ -296,7 +298,8 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 			return e
 		}
 	}
-	var projects []application.Project
+	var sources []application.Source
+	var writableSource string
 	summaryPartial := false
 	mode := domain.ModeLocal
 	if project != "" {
@@ -307,9 +310,21 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		if e = reg.Register(context.Background(), project); e != nil {
 			return errors.Join(e, store.Close())
 		}
-		projects = []application.Project{{Path: project, Name: application.ProjectName(project), Store: store}}
+		origin := domain.TaskOrigin{Kind: domain.OriginProject, Key: project, Name: application.ProjectName(project)}
+		sources = []application.Source{{Origin: origin, Store: store}}
+		writableSource = project
 	} else {
 		mode = domain.ModeGlobal
+		writableSource = domain.GlobalOriginKey
+		globalOrigin := domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"}
+		globalStore, globalErr := openGlobalStore(filepath.Join(data, "tasks", "global.sqlite"))
+		globalSource := application.Source{Origin: globalOrigin}
+		if globalErr != nil {
+			globalSource.Err = fmt.Errorf("Global: %w", globalErr)
+		} else {
+			globalSource.Store = globalStore
+		}
+		sources = append(sources, globalSource)
 		paths, pruneErr := reg.Prune(context.Background())
 		if pruneErr != nil {
 			if invocation.kind != commandSummary {
@@ -320,14 +335,17 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		}
 		for _, p := range paths {
 			store, openErr := db.Open(p)
-			opened := application.Project{Path: p, Name: application.ProjectName(p), Err: openErr}
+			origin := domain.TaskOrigin{Kind: domain.OriginProject, Key: p, Name: application.ProjectName(p)}
+			opened := application.Source{Origin: origin}
 			if openErr == nil {
 				opened.Store = store
+			} else {
+				opened.Err = fmt.Errorf("%s: %w", origin.Name, openErr)
 			}
-			projects = append(projects, opened)
+			sources = append(sources, opened)
 		}
 	}
-	svc := &application.Service{Mode: mode, Projects: projects, Clock: clock.System{}}
+	svc := &application.Service{Mode: mode, Sources: sources, WritableSource: writableSource, Clock: clock.System{}}
 	defer func() { resultErr = errors.Join(resultErr, svc.Close()) }()
 	maintenanceErr := svc.Maintain(context.Background())
 	if maintenanceErr != nil {
@@ -431,6 +449,33 @@ func createProject(path string) (*db.Store, error) {
 		return nil, errors.Join(e, removeFile(path))
 	}
 	return store, nil
+}
+
+func openGlobalStore(path string) (*db.Store, error) {
+	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+		return nil, e
+	}
+	created := false
+	file, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if e == nil {
+		created = true
+		if closeErr := file.Close(); closeErr != nil {
+			return nil, errors.Join(closeErr, removeFile(path))
+		}
+	} else if !errors.Is(e, os.ErrExist) {
+		return nil, e
+	}
+	if e = os.Chmod(path, 0600); e != nil {
+		if created {
+			return nil, errors.Join(e, removeFile(path))
+		}
+		return nil, e
+	}
+	store, e := db.Open(path)
+	if e != nil && created {
+		return nil, errors.Join(e, removeFile(path))
+	}
+	return store, e
 }
 
 func removeFile(path string) error {

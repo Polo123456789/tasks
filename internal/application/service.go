@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,24 +13,44 @@ import (
 	"github.com/Polo123456789/tasks/internal/ports"
 )
 
-type Project struct {
-	Path, Name string
-	Store      ports.TaskStore
-	Err        error
+type Source struct {
+	Origin domain.TaskOrigin
+	Store  ports.TaskStore
+	Err    error
 }
 type Service struct {
-	Mode     domain.Mode
-	Projects []Project
-	Clock    ports.Clock
-	locks    sync.Map
+	Mode           domain.Mode
+	Sources        []Source
+	WritableSource string
+	Clock          ports.Clock
+	locks          sync.Map
 }
 
-func (s *Service) Capabilities() domain.Capabilities { return domain.CapabilitiesFor(s.Mode) }
+func (s *Service) Capabilities(source string) domain.Capabilities {
+	if s.Mode == domain.ModeLocal {
+		available := s.sourceAvailable(s.writableKey())
+		return domain.Capabilities{
+			CanCreateTask:       available,
+			CanCreateStatus:     available,
+			CanCreateSubtask:    available,
+			CanCreateDependency: available,
+			CanCreateRecurrence: available,
+		}
+	}
+	globalAvailable := s.sourceAvailable(s.WritableSource)
+	capabilities := domain.Capabilities{CanCreateTask: globalAvailable}
+	if source == s.WritableSource && globalAvailable {
+		capabilities.CanCreateSubtask = true
+		capabilities.CanCreateDependency = true
+		capabilities.CanCreateRecurrence = true
+	}
+	return capabilities
+}
 func (s *Service) CreateStatus(ctx context.Context, path, name string, initial bool) (domain.Status, error) {
-	if !s.Capabilities().CanCreateStatus {
+	if !s.Capabilities("").CanCreateStatus {
 		return domain.Status{}, domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Status{}, e
 	}
@@ -40,40 +61,40 @@ func (s *Service) CreateStatus(ctx context.Context, path, name string, initial b
 	return p.Store.CreateStatus(ctx, name, initial)
 }
 func (s *Service) RenameStatus(ctx context.Context, path string, id int64, name string) error {
-	if !s.Capabilities().CanCreateStatus {
+	if !s.Capabilities("").CanCreateStatus {
 		return domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.RenameStatus(ctx, id, name) })
 }
 func (s *Service) SetInitialStatus(ctx context.Context, path string, id int64) error {
-	if !s.Capabilities().CanCreateStatus {
+	if !s.Capabilities("").CanCreateStatus {
 		return domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.SetInitialStatus(ctx, id) })
 }
 func (s *Service) ReorderStatuses(ctx context.Context, path string, ids []int64) error {
-	if !s.Capabilities().CanCreateStatus {
+	if !s.Capabilities("").CanCreateStatus {
 		return domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.ReorderStatuses(ctx, ids) })
 }
 func (s *Service) DeleteStatus(ctx context.Context, path string, id int64, destination *int64) error {
-	if !s.Capabilities().CanCreateStatus {
+	if !s.Capabilities("").CanCreateStatus {
 		return domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
@@ -82,21 +103,25 @@ func (s *Service) DeleteStatus(ctx context.Context, path string, id int64, desti
 func (s *Service) ListTasks(ctx context.Context, f ports.TaskFilter) ([]domain.Task, error) {
 	var out []domain.Task
 	var errs []error
-	for _, p := range s.Projects {
-		if f.Project != "" && f.Project != p.Path && f.Project != p.Name {
+	for _, p := range s.Sources {
+		if f.Origin != "" && f.Origin != p.Origin.Key && f.Origin != p.Origin.Name {
 			continue
 		}
 		if p.Err != nil {
 			errs = append(errs, p.Err)
 			continue
 		}
+		if p.Store == nil {
+			errs = append(errs, fmt.Errorf("%s: origen no disponible", p.Origin.Name))
+			continue
+		}
 		tasks, e := p.Store.ListTasks(ctx, f)
 		if e != nil {
-			errs = append(errs, e)
+			errs = append(errs, fmt.Errorf("%s: %w", p.Origin.Name, e))
 			continue
 		}
 		for i := range tasks {
-			tasks[i].Project = p.Path
+			tasks[i].Origin = p.Origin
 		}
 		out = append(out, tasks...)
 	}
@@ -133,8 +158,8 @@ func taskLess(left, right domain.Task, order string) bool {
 	if different {
 		return less
 	}
-	if left.Project != right.Project {
-		return left.Project < right.Project
+	if left.Origin.Identity() != right.Origin.Identity() {
+		return left.Origin.Identity() < right.Origin.Identity()
 	}
 	return left.ID < right.ID
 }
@@ -165,20 +190,48 @@ func compareOptionalDate(left, right *domain.Date) (different, less bool) {
 	}
 	return true, left.Before(*right)
 }
-func (s *Service) project(path string) (Project, error) {
-	if s.Mode == domain.ModeLocal && len(s.Projects) == 1 {
-		return s.Projects[0], nil
+func (s *Service) source(key string) (Source, error) {
+	if key == "" {
+		key = s.writableKey()
 	}
-	for _, p := range s.Projects {
-		if p.Path == path {
+	for _, p := range s.Sources {
+		if p.Origin.Key == key {
+			if p.Err != nil {
+				return p, p.Err
+			}
+			if p.Store == nil {
+				return p, domain.ErrNotFound
+			}
 			return p, nil
 		}
 	}
-	return Project{}, domain.ErrNotFound
+	return Source{}, domain.ErrNotFound
 }
-func (s *Service) CreateTask(ctx context.Context, path string, t domain.Task) (domain.Task, error) {
-	if !s.Capabilities().CanCreateTask {
-		return t, domain.ErrForbidden
+func (s *Service) writableKey() string {
+	if s.WritableSource != "" {
+		return s.WritableSource
+	}
+	if len(s.Sources) == 1 {
+		return s.Sources[0].Origin.Key
+	}
+	return ""
+}
+func (s *Service) sourceAvailable(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, source := range s.Sources {
+		if source.Origin.Key == key {
+			return source.Store != nil && source.Err == nil
+		}
+	}
+	return false
+}
+func (s *Service) CreateTask(ctx context.Context, t domain.Task) (domain.Task, error) {
+	key := s.writableKey()
+	p, e := s.source(key)
+	if e != nil {
+		return t, e
 	}
 	if t.Recurrence != nil && t.RecurrenceAnchor == nil {
 		if s.Clock == nil {
@@ -187,21 +240,19 @@ func (s *Service) CreateTask(ctx context.Context, path string, t domain.Task) (d
 		today := s.Clock.Today()
 		t.RecurrenceAnchor = &today
 	}
-	p, e := s.project(path)
-	if e != nil {
-		return t, e
-	}
-	return s.serial(path, func() (domain.Task, error) { return p.Store.CreateTask(ctx, t) })
+	created, e := s.serial(key, func() (domain.Task, error) { return p.Store.CreateTask(ctx, t) })
+	created.Origin = p.Origin
+	return created, e
 }
 func (s *Service) UpdateTask(ctx context.Context, path string, t domain.Task) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return t, e
 	}
 	return s.serial(path, func() (domain.Task, error) { return p.Store.UpdateTask(ctx, t) })
 }
 func (s *Service) SetStatus(ctx context.Context, path string, id, status, version int64) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -209,10 +260,10 @@ func (s *Service) SetStatus(ctx context.Context, path string, id, status, versio
 }
 
 // SetTaskLifecycle performs a direct lifecycle transition without forcing the
-// caller to know project-specific status IDs or walk through intermediate
+// caller to know origin-specific status IDs or walk through intermediate
 // columns. Supported actions are "complete", "cancel", and "reopen".
 func (s *Service) SetTaskLifecycle(ctx context.Context, path string, id, version int64, action string) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -248,7 +299,7 @@ func (s *Service) MoveTaskStatus(ctx context.Context, path string, id, version i
 	if direction != -1 && direction != 1 {
 		return domain.Task{}, domain.ValidationError{Field: "direction", Message: "must be -1 or 1"}
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -279,9 +330,12 @@ func (s *Service) MoveTaskStatus(ctx context.Context, path string, id, version i
 	}
 	target := index + direction
 	if target < 0 || target >= len(statuses) {
+		task.Origin = p.Origin
 		return task, nil
 	}
-	return p.Store.SetTaskStatus(ctx, id, statuses[target].ID, version)
+	updated, e := p.Store.SetTaskStatus(ctx, id, statuses[target].ID, version)
+	updated.Origin = p.Origin
+	return updated, e
 }
 func (s *Service) UpdateTaskTitle(ctx context.Context, path string, id, version int64, title string) (domain.Task, error) {
 	return s.updateTask(ctx, path, id, version, func(task *domain.Task) { task.Title = title })
@@ -290,7 +344,7 @@ func (s *Service) UpdateTaskMarkdown(ctx context.Context, path string, id, versi
 	return s.updateTask(ctx, path, id, version, func(task *domain.Task) { task.Markdown = markdown })
 }
 func (s *Service) CycleTaskPriority(ctx context.Context, path string, id, version int64) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -306,7 +360,9 @@ func (s *Service) CycleTaskPriority(ctx context.Context, path string, id, versio
 		return domain.Task{}, domain.ErrConflict
 	}
 	priority := (task.Priority + 1) % (domain.PriorityUrgent + 1)
-	return p.Store.SetTaskPriority(ctx, id, priority, version)
+	updated, e := p.Store.SetTaskPriority(ctx, id, priority, version)
+	updated.Origin = p.Origin
+	return updated, e
 }
 func (s *Service) UpdateTaskDate(ctx context.Context, path string, id, version int64, field string, date *domain.Date) (domain.Task, error) {
 	if field != "start" && field != "due" {
@@ -321,7 +377,7 @@ func (s *Service) UpdateTaskDate(ctx context.Context, path string, id, version i
 	})
 }
 func (s *Service) UpdateTaskRecurrence(ctx context.Context, path string, id, version int64, recurrence *domain.Recurrence) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -336,7 +392,7 @@ func (s *Service) UpdateTaskRecurrence(ctx context.Context, path string, id, ver
 	if task.Version != version {
 		return domain.Task{}, domain.ErrConflict
 	}
-	if s.Mode == domain.ModeGlobal && task.Recurrence == nil && recurrence != nil {
+	if task.Recurrence == nil && recurrence != nil && !s.Capabilities(path).CanCreateRecurrence {
 		return domain.Task{}, domain.ErrForbidden
 	}
 	if recurrence == nil {
@@ -355,24 +411,28 @@ func (s *Service) UpdateTaskRecurrence(ctx context.Context, path string, id, ver
 			task.RecurrenceAnchor = &anchor
 		}
 	}
-	return p.Store.UpdateTask(ctx, task)
+	updated, e := p.Store.UpdateTask(ctx, task)
+	updated.Origin = p.Origin
+	return updated, e
 }
 func (s *Service) Task(ctx context.Context, path string, id int64) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
-	return p.Store.Task(ctx, id)
+	task, e := p.Store.Task(ctx, id)
+	task.Origin = p.Origin
+	return task, e
 }
 func (s *Service) History(ctx context.Context, path string, taskID int64) ([]domain.HistoryEvent, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return nil, e
 	}
 	return p.Store.History(ctx, taskID)
 }
 func (s *Service) updateTask(ctx context.Context, path string, id, version int64, change func(*domain.Task)) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -388,13 +448,15 @@ func (s *Service) updateTask(ctx context.Context, path string, id, version int64
 		return domain.Task{}, domain.ErrConflict
 	}
 	change(&task)
-	return p.Store.UpdateTask(ctx, task)
+	updated, e := p.Store.UpdateTask(ctx, task)
+	updated.Origin = p.Origin
+	return updated, e
 }
 func (s *Service) AddSubtask(ctx context.Context, path string, taskID, version int64, title string) (domain.Subtask, error) {
-	if !s.Capabilities().CanCreateTask {
+	if !s.Capabilities(path).CanCreateSubtask {
 		return domain.Subtask{}, domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Subtask{}, e
 	}
@@ -405,7 +467,7 @@ func (s *Service) AddSubtask(ctx context.Context, path string, taskID, version i
 	return p.Store.AddSubtask(ctx, taskID, version, title)
 }
 func (s *Service) RenameSubtask(ctx context.Context, path string, taskID, id, version int64, title string) (domain.Subtask, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Subtask{}, e
 	}
@@ -416,14 +478,14 @@ func (s *Service) RenameSubtask(ctx context.Context, path string, taskID, id, ve
 	return p.Store.RenameSubtask(ctx, taskID, id, version, title)
 }
 func (s *Service) SetSubtaskStatus(ctx context.Context, path string, taskID, id, statusID, version int64) error {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.SetSubtaskStatus(ctx, taskID, id, statusID, version) })
 }
 func (s *Service) ToggleSubtask(ctx context.Context, path string, taskID, subtaskID, version int64) error {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
@@ -469,7 +531,7 @@ func (s *Service) MoveSubtaskStatus(ctx context.Context, path string, taskID, su
 	if direction != -1 && direction != 1 {
 		return domain.ValidationError{Field: "direction", Message: "must be -1 or 1"}
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
@@ -507,28 +569,28 @@ func (s *Service) MoveSubtaskStatus(ctx context.Context, path string, taskID, su
 	})
 }
 func (s *Service) AddDependency(ctx context.Context, path string, taskID, dependsOn, version int64) error {
-	if !s.Capabilities().CanCreateDependency {
+	if !s.Capabilities(path).CanCreateDependency {
 		return domain.ErrForbidden
 	}
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.AddDependency(ctx, taskID, dependsOn, version) })
 }
 func (s *Service) RemoveDependency(ctx context.Context, path string, taskID, dependsOn, version int64) error {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return e
 	}
 	return s.serialError(path, func() error { return p.Store.RemoveDependency(ctx, taskID, dependsOn, version) })
 }
 
-// DependencyCandidates returns complete project-local choices for the TUI.
+// DependencyCandidates returns complete origin-local choices for the TUI.
 // It intentionally bypasses the active view filters so a dependency never
 // becomes impossible to manage just because its task is currently hidden.
 func (s *Service) DependencyCandidates(ctx context.Context, path string, taskID int64, existingOnly bool) ([]domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return nil, e
 	}
@@ -555,12 +617,13 @@ func (s *Service) DependencyCandidates(ctx context.Context, path string, taskID 
 		if existingOnly != isExisting {
 			continue
 		}
+		task.Origin = p.Origin
 		out = append(out, task)
 	}
 	return out, nil
 }
 func (s *Service) TrashTask(ctx context.Context, path string, id, version int64) ([]int64, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return nil, e
 	}
@@ -574,14 +637,14 @@ func (s *Service) TrashTask(ctx context.Context, path string, id, version int64)
 	return p.Store.TrashTask(ctx, id, version, s.Clock.Today())
 }
 func (s *Service) DependencyImpact(ctx context.Context, path string, id int64) ([]int64, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return nil, e
 	}
 	return p.Store.DependencyImpact(ctx, id)
 }
 func (s *Service) RestoreTask(ctx context.Context, path string, id, version int64) (domain.Task, error) {
-	p, e := s.project(path)
+	p, e := s.source(path)
 	if e != nil {
 		return domain.Task{}, e
 	}
@@ -592,7 +655,13 @@ func (s *Service) serial(key string, fn func() (domain.Task, error)) (domain.Tas
 	m := v.(*sync.Mutex)
 	m.Lock()
 	defer m.Unlock()
-	return fn()
+	task, err := fn()
+	if err == nil {
+		if source, sourceErr := s.source(key); sourceErr == nil {
+			task.Origin = source.Origin
+		}
+	}
+	return task, err
 }
 func (s *Service) serialError(key string, fn func() error) error {
 	v, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
@@ -603,7 +672,7 @@ func (s *Service) serialError(key string, fn func() error) error {
 }
 func (s *Service) Maintain(ctx context.Context) error {
 	var errs []error
-	for _, p := range s.Projects {
+	for _, p := range s.Sources {
 		if p.Store != nil {
 			errs = append(errs, p.Store.Maintain(ctx, s.Clock.Today()))
 		}
@@ -612,7 +681,7 @@ func (s *Service) Maintain(ctx context.Context) error {
 }
 func (s *Service) Close() error {
 	var errs []error
-	for _, p := range s.Projects {
+	for _, p := range s.Sources {
 		if p.Store != nil {
 			errs = append(errs, p.Store.Close())
 		}

@@ -3,22 +3,22 @@ package presenter
 import (
 	"fmt"
 	"github.com/Polo123456789/tasks/internal/domain"
-	"path/filepath"
 )
 
 type Task struct {
-	ID                                              int64
-	Source, Project, Title, Status, Priority, Dates string
-	StatusKind                                      domain.StatusKind
-	Start, Due                                      string
-	DeletedAt                                       string
-	Markdown                                        string
-	Recurrence                                      string
-	Blocked, Recurring                              bool
-	SubtasksDone, SubtasksTotal, Dependencies       int
-	Subtasks                                        []Subtask
-	DependencyIDs                                   []int64
-	Version                                         int64
+	ID                                             int64
+	Source, Origin, Title, Status, Priority, Dates string
+	SourceKind                                     domain.OriginKind
+	StatusKind                                     domain.StatusKind
+	Start, Due                                     string
+	DeletedAt                                      string
+	Markdown                                       string
+	Recurrence                                     string
+	Blocked, Recurring                             bool
+	SubtasksDone, SubtasksTotal, Dependencies      int
+	Subtasks                                       []Subtask
+	DependencyIDs                                  []int64
+	Version                                        int64
 }
 
 type Subtask struct {
@@ -41,11 +41,6 @@ func Tasks(in []domain.Task) []Task {
 			}
 			dates += v.Due.String()
 		}
-		project := ""
-		if v.Project != "" {
-			base := filepath.Base(v.Project)
-			project = base[:len(base)-len(filepath.Ext(base))]
-		}
 		done, total, dependencies := v.SubtaskDoneCount, v.SubtaskCount, v.DependencyCount
 		if len(v.Subtasks) > 0 {
 			total = len(v.Subtasks)
@@ -64,7 +59,7 @@ func Tasks(in []domain.Task) []Task {
 			subtasks = append(subtasks, Subtask{ID: subtask.ID, Title: subtask.Title, Status: subtask.Status.Name, Done: subtask.Status.Kind == domain.StatusDone})
 		}
 		out = append(out, Task{
-			ID: v.ID, Source: v.Project, Project: project, Title: v.Title,
+			ID: v.ID, Source: v.Origin.Key, Origin: v.Origin.Name, SourceKind: v.Origin.Kind, Title: v.Title,
 			Status: v.Status.Name, StatusKind: v.Status.Kind, Priority: v.Priority.String(), Dates: dates,
 			Markdown: v.Markdown, Blocked: v.Blocked, Recurring: v.Recurrence != nil,
 			SubtasksDone: done, SubtasksTotal: total, Dependencies: dependencies,

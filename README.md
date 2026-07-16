@@ -1,6 +1,6 @@
 # tasks
 
-Gestor de tareas completamente local para terminal. Cada proyecto es una base SQLite autocontenida y portable con extensión `.tasks`.
+Gestor de tareas completamente local para terminal. Cada proyecto es una base SQLite autocontenida y portable con extensión `.tasks`; fuera de proyectos también puedes mantener tareas propias del modo global.
 
 ## Instalación
 
@@ -20,7 +20,9 @@ cd mi-proyecto
 tasks init mi-proyecto.tasks
 ```
 
-`tasks` busca el archivo `.tasks` desde el directorio actual hacia sus padres. Fuera de un proyecto abre el modo global con todos los proyectos registrados. El índice global solo guarda rutas; cada mutación se escribe en el archivo de origen.
+`tasks` busca el archivo `.tasks` desde el directorio actual hacia sus padres. Fuera de un proyecto abre el modo global con sus tareas propias y todos los proyectos registrados. El índice global solo guarda rutas; cada mutación se escribe en el almacén de origen.
+
+En global, `n` crea una tarea sin proyecto. Estas tareas admiten subtareas, recurrencias y dependencias entre ellas. Al seleccionar una tarea de un proyecto registrado se puede editar lo existente, pero no añadir tareas, subtareas, dependencias ni recurrencias nuevas a ese proyecto.
 
 ## Ayuda de línea de comandos
 
@@ -92,7 +94,7 @@ El formato actual es `tasks-project` versión 1:
 
 ### Resumen para el inicio de la terminal
 
-`tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto resume solo ese archivo; fuera de uno agrega los proyectos registrados e identifica cada tarea por proyecto.
+`tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.
 
 La salida usa el ancho disponible, nunca supera 20 filas y activa colores automáticamente solo al escribir en una terminal. Se puede controlar con `--color=always`, `--color=never` o `--no-color`.
 
@@ -120,14 +122,14 @@ Las tareas finalizadas, canceladas, eliminadas y pendientes sin fecha se omiten.
 - `{` / `}`: mover la subtarea seleccionada entre estados.
 - `g` / `G`: crear/eliminar una dependencia mediante un selector de tareas; `c`: configurar recurrencia mediante un formulario guiado.
 - `d`: papelera; `u`: restaurar; `H`: historial.
-- `/`, `?`, `P`, `S`, `D`: buscar título/Markdown y filtrar proyecto/estado/fechas.
+- `/`, `?`, `P`, `S`, `D`: buscar título/Markdown y filtrar origen/estado/fechas.
 - `1`, `B`, `R`, `F`, `X`, `o`, `0`: prioridad, bloqueo, recurrencia, visibilidad de finalizadas/canceladas, orden y limpiar filtros.
 - En la vista Estados: `a`, `e`, `i`, `[`/`]`, `d` administran estados normales.
 - `r`: refrescar; `q` o `Ctrl+C`: salir.
 
 Las operaciones que relacionan elementos no requieren memorizar IDs: dependencias, filtro local por estado y destino al eliminar un estado presentan selectores con ID, título y estado. Los IDs permanecen visibles en Tabla, detalle y Estados para diagnóstico.
 
-En modo global, una acción de creación muestra una explicación en lugar de fallar silenciosamente. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
+En modo global, `n` crea siempre en el origen propio. Las acciones de creación anidada aparecen para tareas globales y muestran una explicación cuando la tarea pertenece a un proyecto registrado. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
 
 La terminal mínima soportada es de 90 columnas por 40 filas (`90x40`). El cuerpo reserva dinámicamente el espacio ocupado por el pie contextual multilínea.
 
@@ -168,7 +170,8 @@ Fixtures: `default`, `empty`, `crowded`, `dependencies`, `loading`, `error`, `co
 ## Datos y diagnóstico
 
 - El proyecto vive únicamente en su archivo `.tasks`.
-- El registro y `tasks.log` se guardan bajo el directorio de configuración del usuario devuelto por el sistema operativo, dentro de `tasks/`.
+- El registro, `tasks.log` y el almacén privado `global.sqlite` se guardan bajo el directorio de configuración del usuario devuelto por el sistema operativo, dentro de `tasks/`.
+- `global.sqlite` no se registra, no se descubre como proyecto y solo aparece en modo global.
 - SQLite usa `foreign_keys=ON`, journal `DELETE`, sincronización `FULL`, timeout limitado y control optimista de versiones.
 - La papelera conserva tareas durante 30 días.
 

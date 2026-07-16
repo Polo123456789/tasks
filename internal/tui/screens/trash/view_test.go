@@ -8,7 +8,7 @@ import (
 )
 
 func TestViewShowsProjectAndExpiration(t *testing.T) {
-	view := View([]presenter.Task{{Title: "Deleted", Project: "alpha", DeletedAt: "2026-07-01"}}, 0, 20)
+	view := View([]presenter.Task{{Title: "Deleted", Origin: "alpha", DeletedAt: "2026-07-01"}}, 0, 20)
 	for _, expected := range []string{"Deleted [alpha]", "eliminada 2026-07-01", "vence 2026-07-31"} {
 		if !strings.Contains(view, expected) {
 			t.Errorf("missing %q:\n%s", expected, view)

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/Polo123456789/tasks/internal/tui/screens/listutil"
 	"github.com/Polo123456789/tasks/internal/tui/theme"
@@ -27,7 +28,7 @@ func View(tasks []presenter.Task, selected, width, height int, global bool) stri
 		theme.Title.Render("  " + renderRow(columns, headerValues(columns))),
 		theme.Help.Render("  " + renderDivider(columns)),
 	}
-	projects := disambiguatedProjects(tasks)
+	origins := disambiguatedOrigins(tasks)
 	available := max(1, height-len(lines))
 	start, end, showAbove, showBelow := visibleWindow(len(tasks), selected, available)
 	if showAbove {
@@ -35,11 +36,11 @@ func View(tasks []presenter.Task, selected, width, height int, global bool) stri
 	}
 	for index := start; index < end; index++ {
 		task := tasks[index]
-		project := projects[index]
-		projectColumn := hasColumn(columns, "PROYECTO")
-		values := rowValues(task, project, columnWidth(columns, "PLANIFICACIÓN"))
-		if global && !projectColumn && project != "" {
-			values["TÍTULO"] = titleWithProject(task.Title, project, columns[1].width)
+		origin := origins[index]
+		originColumn := hasColumn(columns, "ORIGEN")
+		values := rowValues(task, origin, columnWidth(columns, "PLANIFICACIÓN"))
+		if global && !originColumn && origin != "" {
+			values["TÍTULO"] = titleWithOrigin(task.Title, origin, columns[1].width)
 		}
 		styles := map[string]lipgloss.Style(nil)
 		if index != selected {
@@ -77,7 +78,7 @@ func tableColumns(width int, global bool) []column {
 		{title: "BLOQ.", width: 5},
 	}
 	if global && width >= 130 {
-		columns = append(columns, column{title: "PROYECTO", width: min(24, max(18, width/7))})
+		columns = append(columns, column{title: "ORIGEN", width: min(24, max(18, width/7))})
 	}
 	fixed := 0
 	for _, item := range columns {
@@ -97,7 +98,7 @@ func headerValues(columns []column) map[string]string {
 	return values
 }
 
-func rowValues(task presenter.Task, project string, planWidth int) map[string]string {
+func rowValues(task presenter.Task, origin string, planWidth int) map[string]string {
 	plan := planning(task, planWidth)
 	if task.Recurrence != "" {
 		plan = "↻ " + task.Recurrence
@@ -121,7 +122,7 @@ func rowValues(task presenter.Task, project string, planWidth int) map[string]st
 		"PLANIFICACIÓN": plan,
 		"SUB":           subtasks,
 		"BLOQ.":         blocked,
-		"PROYECTO":      project,
+		"ORIGEN":        origin,
 	}
 }
 
@@ -158,8 +159,8 @@ func shortMonth(value time.Month) string {
 	return [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}[value-1]
 }
 
-func titleWithProject(title, project string, width int) string {
-	suffix := " [" + project + "]"
+func titleWithOrigin(title, origin string, width int) string {
+	suffix := " [" + origin + "]"
 	if lipgloss.Width(suffix) >= width {
 		return truncateWidth(suffix, width)
 	}
@@ -216,22 +217,22 @@ func truncateWidth(value string, width int) string {
 	return string(runes) + "…"
 }
 
-func disambiguatedProjects(tasks []presenter.Task) []string {
+func disambiguatedOrigins(tasks []presenter.Task) []string {
 	sources := make(map[string]map[string]struct{})
 	for _, task := range tasks {
-		if sources[task.Project] == nil {
-			sources[task.Project] = make(map[string]struct{})
+		if sources[task.Origin] == nil {
+			sources[task.Origin] = make(map[string]struct{})
 		}
-		sources[task.Project][task.Source] = struct{}{}
+		sources[task.Origin][task.Source] = struct{}{}
 	}
-	projects := make([]string, len(tasks))
+	origins := make([]string, len(tasks))
 	for index, task := range tasks {
-		projects[index] = task.Project
-		if task.Project != "" && len(sources[task.Project]) > 1 {
-			projects[index] = task.Source
+		origins[index] = task.Origin
+		if task.Origin != "" && len(sources[task.Origin]) > 1 && task.SourceKind != domain.OriginGlobal {
+			origins[index] = task.Source
 		}
 	}
-	return projects
+	return origins
 }
 
 func visibleWindow(total, selected, capacity int) (start, end int, showAbove, showBelow bool) {

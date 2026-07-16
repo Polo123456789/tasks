@@ -6,13 +6,17 @@ import "strings"
 // screen. Footer deliberately contains the complete contextual map: F1 remains
 // useful as a reference, but is not required to discover an available action.
 type Context struct {
-	View          int
-	Global        bool
-	HasTask       bool
-	HasSubtask    bool
-	HasDependency bool
-	NormalStatus  bool
-	Recurring     bool
+	View                int
+	Global              bool
+	HasTask             bool
+	HasSubtask          bool
+	HasDependency       bool
+	NormalStatus        bool
+	Recurring           bool
+	CanCreateTask       bool
+	CanCreateSubtask    bool
+	CanCreateDependency bool
+	CanCreateRecurrence bool
 }
 
 // Footer returns one logical group per line. The app wraps these lines to the
@@ -40,7 +44,7 @@ func Footer(context Context) string {
 			navigation += " · ,/. desplazar 7 días"
 		}
 		lines = append(lines, navigation+" · r recargar · q salir")
-		if !context.Global {
+		if context.CanCreateTask {
 			lines = append(lines, "Crear      n nueva tarea")
 		}
 		if context.HasTask {
@@ -48,17 +52,27 @@ func Footer(context Context) string {
 				"Tarea      e título · p prioridad · [/] estado · f finalizar · C cancelar · z reabrir",
 				"Contenido  s inicio · v vencimiento · m Markdown · d papelera · H historial",
 			)
-			if !context.Global || context.Recurring {
+			if context.CanCreateRecurrence || context.Recurring {
 				lines[len(lines)-1] += " · c recurrencia"
 			}
-			if !context.Global {
-				relations := "Relaciones a añadir subtarea · g agregar dependencia"
-				if context.HasDependency {
-					relations += " · G quitar dependencia"
+			relations := ""
+			if context.CanCreateSubtask {
+				relations = "Relaciones a añadir subtarea"
+			}
+			if context.CanCreateDependency {
+				if relations == "" {
+					relations = "Relaciones"
 				}
+				relations += " · g agregar dependencia"
+			}
+			if context.HasDependency {
+				if relations == "" {
+					relations = "Relaciones"
+				}
+				relations += " · G quitar dependencia"
+			}
+			if relations != "" {
 				lines = append(lines, relations)
-			} else if context.HasDependency {
-				lines = append(lines, "Relaciones G quitar dependencia")
 			}
 			if context.HasSubtask {
 				lines = append(lines, "Subtarea   J/K seleccionar · E renombrar · t completar/reabrir · {/} cambiar estado")
@@ -66,7 +80,7 @@ func Footer(context Context) string {
 		}
 		filters := "Búsqueda   / título · ? Markdown"
 		if context.Global {
-			filters += " · P proyecto"
+			filters += " · P origen"
 		}
 		lines = append(lines,
 			filters+" · S estado · D fechas",
@@ -81,7 +95,7 @@ func Footer(context Context) string {
 func Full(global bool) string {
 	mode := "Modo local: permite crear tareas, subtareas, dependencias, recurrencias y estados."
 	if global {
-		mode = "Modo global: permite editar, pero no crear elementos."
+		mode = "Modo global: crea tareas propias; los proyectos registrados no reciben elementos nuevos."
 	}
 	sections := []string{
 		"AYUDA DE TASKS",
@@ -101,7 +115,7 @@ func Full(global bool) string {
 		"  {/} mover estado      g agregar dependencia      G eliminar dependencia",
 		"",
 		"Búsqueda, filtros y orden",
-		"  / título     ? Markdown     P proyecto     S estado     D fechas",
+		"  / título     ? Markdown     P origen       S estado     D fechas",
 		"  1 prioridad    B bloqueadas    R recurrentes    F alternar finalizadas",
 		"  X alternar canceladas      o ordenar      0 limpiar filtros",
 		"",

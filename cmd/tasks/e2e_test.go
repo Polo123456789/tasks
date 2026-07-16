@@ -221,6 +221,67 @@ func TestE2EInitCreateCloseAndReopen(t *testing.T) {
 	stopPTY(t, terminal, command, output)
 }
 
+func TestE2EGlobalTaskPersistsAndDoesNotAppearLocally(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("initial release supports Linux and macOS")
+	}
+	root := t.TempDir()
+	binary := buildBinary(t, root)
+	home := filepath.Join(root, "home")
+	globalDirectory := filepath.Join(root, "outside")
+	localDirectory := filepath.Join(root, "project")
+	if err := os.MkdirAll(globalDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(localDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	terminal, command, output := runPTY(t, binary, globalDirectory, home)
+	waitForText(t, output, "Calendario")
+	if _, err := terminal.Write([]byte("n")); err != nil {
+		t.Fatal(err)
+	}
+	waitForText(t, output, "Nueva tarea")
+	if _, err := terminal.Write([]byte("Tarea global E2E\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForText(t, output, "Tarea creada")
+	stopPTY(t, terminal, command, output)
+
+	globalPath := filepath.Join(home, "config", "tasks", "global.sqlite")
+	store, err := db.Open(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListTasks(context.Background(), ports.TaskFilter{IncludeDone: true, IncludeCancelled: true})
+	if closeErr := store.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil || len(tasks) != 1 || tasks[0].Title != "Tarea global E2E" {
+		t.Fatalf("global tasks=%#v err=%v", tasks, err)
+	}
+	info, err := os.Stat(globalPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("global store info=%v err=%v", info, err)
+	}
+
+	localPath := filepath.Join(localDirectory, "local.tasks")
+	localStore, err := db.Open(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = localStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	terminal, command, output = runPTY(t, binary, localDirectory, home)
+	waitForText(t, output, "Kanban")
+	if output.contains("Tarea global E2E") {
+		t.Fatalf("local TUI leaked global task:\n%s", output.text())
+	}
+	stopPTY(t, terminal, command, output)
+}
+
 func TestE2EImportCommandCreatesRegisteredProjectAndExits(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("initial release supports Linux and macOS")

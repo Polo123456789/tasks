@@ -56,8 +56,17 @@ func (b *fakeBackend) Maintain(context.Context) error {
 	b.maintainCalls++
 	return nil
 }
-func (b *fakeBackend) Capabilities() domain.Capabilities {
-	return domain.CapabilitiesFor(b.mode)
+func (b *fakeBackend) Capabilities(source string) domain.Capabilities {
+	if b.mode == domain.ModeLocal {
+		return domain.Capabilities{CanCreateTask: true, CanCreateStatus: true, CanCreateSubtask: true, CanCreateDependency: true, CanCreateRecurrence: true}
+	}
+	capabilities := domain.Capabilities{CanCreateTask: true}
+	if source == domain.GlobalOriginKey {
+		capabilities.CanCreateSubtask = true
+		capabilities.CanCreateDependency = true
+		capabilities.CanCreateRecurrence = true
+	}
+	return capabilities
 }
 func (b *fakeBackend) List(_ context.Context, filter ports.TaskFilter) ([]domain.Task, error) {
 	b.lastFilter = filter
@@ -262,7 +271,7 @@ func TestPartialGlobalResultsRemainVisibleWhenOneProjectFails(t *testing.T) {
 }
 
 func TestTrashAndRestoreCommandsReloadTheirViews(t *testing.T) {
-	task := domain.Task{ID: 7, Title: "task", Version: 2, Project: "/p/project.tasks"}
+	task := domain.Task{ID: 7, Title: "task", Version: 2, Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p/project.tasks", Name: "project"}}
 	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}, deleted: []domain.Task{task}}
 	model := NewAt(backend, "table")
 	msg := model.Init()()
@@ -369,8 +378,8 @@ func TestEditTitleAndMoveStatusRunAsynchronousMutations(t *testing.T) {
 }
 
 func TestSubtaskAndDependencyInteractions(t *testing.T) {
-	task := domain.Task{ID: 3, Title: "parent", Version: 1, Project: "/p.tasks", Subtasks: []domain.Subtask{{ID: 8, Title: "child"}}}
-	candidate := domain.Task{ID: 42, Title: "required", Version: 1, Project: "/p.tasks", Status: domain.Status{Name: "Pending"}}
+	task := domain.Task{ID: 3, Title: "parent", Version: 1, Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"}, Subtasks: []domain.Subtask{{ID: 8, Title: "child"}}}
+	candidate := domain.Task{ID: 42, Title: "required", Version: 1, Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"}, Status: domain.Status{Name: "Pending"}}
 	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task, candidate}}
 	model := New(backend)
 	updated, cmd := model.Update(loaded{tasks: backend.tasks})
@@ -429,12 +438,12 @@ func TestSubtaskAndDependencyInteractions(t *testing.T) {
 	}
 }
 
-func TestGlobalModeHidesSubtaskAndDependencyCreation(t *testing.T) {
+func TestGlobalModeHidesNestedCreationForProjectTasks(t *testing.T) {
 	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
 	model := New(backend)
 	updated, _ := model.Update(loaded{tasks: backend.tasks})
 	model = updated.(Model)
-	for _, forbidden := range []string{"a", "g", "n"} {
+	for _, forbidden := range []string{"a", "g"} {
 		updated, cmd := model.Update(key(forbidden))
 		model = updated.(Model)
 		if cmd != nil || model.inputMode {
@@ -700,12 +709,12 @@ func TestContextualFooterOnlyShowsActionsAvailableInGlobalMode(t *testing.T) {
 	updated, _ = model.Update(loaded{tasks: backend.tasks})
 	model = updated.(Model)
 	view := model.View()
-	for _, unavailable := range []string{"n nueva tarea", "a añadir subtarea", "g agregar dependencia", "c recurrencia"} {
+	for _, unavailable := range []string{"a añadir subtarea", "g agregar dependencia", "c recurrencia"} {
 		if strings.Contains(view, unavailable) {
 			t.Fatalf("global footer exposes unavailable action %q:\n%s", unavailable, view)
 		}
 	}
-	for _, available := range []string{"P proyecto", "G quitar dependencia", "e título", "F mostrar/ocultar finalizadas", "X mostrar/ocultar"} {
+	for _, available := range []string{"n nueva tarea", "P origen", "G quitar dependencia", "e título", "F mostrar/ocultar finalizadas", "X mostrar/ocultar"} {
 		if !strings.Contains(view, available) {
 			t.Fatalf("global footer missing %q:\n%s", available, view)
 		}
@@ -755,15 +764,31 @@ func TestChangingTaskViewReloadsFullDetail(t *testing.T) {
 	}
 }
 
-func TestGlobalCreationKeysExplainRestriction(t *testing.T) {
+func TestGlobalTaskCreationOpensOwnTaskForm(t *testing.T) {
 	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task"}}}
 	model := New(backend)
 	updated, _ := model.Update(loaded{tasks: backend.tasks})
 	model = updated.(Model)
 	updated, _ = model.Update(key("n"))
 	model = updated.(Model)
-	if !strings.Contains(model.notice, "Modo global") {
-		t.Fatalf("notice=%q", model.notice)
+	if !model.inputMode || model.inputAction != "create" {
+		t.Fatalf("inputMode=%v action=%q notice=%q", model.inputMode, model.inputAction, model.notice)
+	}
+}
+
+func TestGlobalOwnedTaskExposesNestedCreation(t *testing.T) {
+	origin := domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"}
+	backend := &fakeBackend{mode: domain.ModeGlobal, tasks: []domain.Task{{ID: 1, Title: "task", Origin: origin}}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	view := model.View()
+	for _, available := range []string{"a añadir subtarea", "g agregar dependencia", "c recurrencia"} {
+		if !strings.Contains(view, available) {
+			t.Fatalf("global task footer missing %q:\n%s", available, view)
+		}
 	}
 }
 
@@ -812,8 +837,8 @@ func TestCrowdedKanbanFitsMinimumNinetyByForty(t *testing.T) {
 }
 
 func TestReloadPreservesSelectedTaskIdentityAfterResorting(t *testing.T) {
-	first := domain.Task{ID: 1, Title: "first", Project: "/p.tasks"}
-	second := domain.Task{ID: 2, Title: "second", Project: "/p.tasks"}
+	first := domain.Task{ID: 1, Title: "first", Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"}}
+	second := domain.Task{ID: 2, Title: "second", Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"}}
 	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{first, second}}
 	model := New(backend)
 	updated, _ := model.Update(loaded{tasks: backend.tasks})

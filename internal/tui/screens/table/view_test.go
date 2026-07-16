@@ -5,14 +5,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/charmbracelet/lipgloss"
 )
 
 func TestViewRendersAlignedColumnsAndDisambiguatesProjects(t *testing.T) {
 	tasks := []presenter.Task{
-		{Title: "First", Status: "Pending", Priority: "Alta", Recurrence: "weekly:mon,thu", Blocked: true, SubtasksDone: 1, SubtasksTotal: 3, Project: "same", Source: "/a/same.tasks"},
-		{Title: "Second", Status: "Done", Priority: "Baja", Project: "same", Source: "/b/same.tasks"},
+		{Title: "First", Status: "Pending", Priority: "Alta", Recurrence: "weekly:mon,thu", Blocked: true, SubtasksDone: 1, SubtasksTotal: 3, Origin: "same", Source: "/a/same.tasks"},
+		{Title: "Second", Status: "Done", Priority: "Baja", Origin: "same", Source: "/b/same.tasks"},
 	}
 	view := View(tasks, 0, 120, 20, true)
 	for _, expected := range []string{"PLANIFICACIÓN", "│", "─┼─", "weekly:mon", "sí", "1/3", "/a/same.tasks", "/b/same.tasks"} {
@@ -46,7 +47,7 @@ func TestViewAdaptsToMinimumWidth(t *testing.T) {
 	tasks := []presenter.Task{{
 		ID: 42, Title: "A very long task title that needs truncation", Status: "En progreso",
 		Priority: "Urgente", Dates: "2026-07-16 → 2026-08-15", Blocked: true,
-		SubtasksDone: 3, SubtasksTotal: 10, Project: "alpha", Source: "/work/alpha.tasks",
+		SubtasksDone: 3, SubtasksTotal: 10, Origin: "alpha", Source: "/work/alpha.tasks",
 	}}
 	view := View(tasks, 0, 90, 10, true)
 	for _, line := range strings.Split(view, "\n") {
@@ -62,10 +63,23 @@ func TestViewAdaptsToMinimumWidth(t *testing.T) {
 }
 
 func TestWideGlobalViewUsesProjectColumn(t *testing.T) {
-	tasks := []presenter.Task{{ID: 1, Title: "Task", Status: "Pending", Priority: "Alta", Project: "alpha", Source: "/work/alpha.tasks"}}
+	tasks := []presenter.Task{{ID: 1, Title: "Task", Status: "Pending", Priority: "Alta", Origin: "alpha", Source: "/work/alpha.tasks"}}
 	view := View(tasks, 0, 160, 10, true)
-	if !strings.Contains(view, "PROYECTO") || !strings.Contains(view, "alpha") {
+	if !strings.Contains(view, "ORIGEN") || !strings.Contains(view, "alpha") {
 		t.Fatalf("wide global table lacks project column:\n%s", view)
+	}
+}
+
+func TestGlobalOriginKeepsItsNameWhenProjectHasSameName(t *testing.T) {
+	tasks := []presenter.Task{
+		{ID: 1, Title: "Own", Status: "Pending", Origin: "Global", Source: "global", SourceKind: domain.OriginGlobal},
+		{ID: 1, Title: "Project", Status: "Pending", Origin: "Global", Source: "/work/Global.tasks", SourceKind: domain.OriginProject},
+	}
+	view := View(tasks, 0, 140, 20, true)
+	for _, expected := range []string{"Global", "/work/Global.tasks"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("origin disambiguation missing %q:\n%s", expected, view)
+		}
 	}
 }
 
