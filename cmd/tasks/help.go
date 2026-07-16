@@ -40,7 +40,7 @@ Comandos:
   init               Crear un proyecto nuevo y abrirlo.
   ai-prompt          Imprimir el prompt para convertir una conversación a JSON.
   import             Crear un proyecto nuevo desde JSON en un archivo o stdin.
-  summary            Mostrar tareas atrasadas, para hoy y activas en hasta 20 líneas.
+  summary            Mostrar tareas relevantes y, dentro de un proyecto, su Gantt.
   help               Mostrar esta ayuda global.
 
 Opciones:

@@ -168,3 +168,50 @@ func TestEmptySummaryIsCompact(t *testing.T) {
 		t.Fatalf("empty summary=%q", rendered)
 	}
 }
+
+func TestSummaryGanttUsesCurrentMonthAndHonorsPresentationOptions(t *testing.T) {
+	today := mustSummaryDate(t, "2026-07-16")
+	start := mustSummaryDate(t, "2026-07-14")
+	due := mustSummaryDate(t, "2026-07-18")
+	tasks := []domain.Task{{
+		ID:     1,
+		Title:  "Preparar despliegue",
+		Status: domain.Status{Name: "En progreso", Kind: domain.StatusNormal},
+		Start:  &start,
+		Due:    &due,
+	}}
+
+	rendered := renderSummaryGantt(tasks, summaryRenderOptions{today: today, width: 48}, 6)
+	for _, expected := range []string{"Gantt · julio 2026", "Preparar desp", "●"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("Gantt missing %q:\n%s", expected, rendered)
+		}
+	}
+	if strings.Contains(rendered, "\x1b[") {
+		t.Fatalf("plain Gantt emitted ANSI: %q", rendered)
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) > 6 {
+		t.Fatalf("Gantt produced %d lines", len(lines))
+	}
+	for _, line := range lines {
+		if width := runewidth.StringWidth(line); width > 48 {
+			t.Fatalf("Gantt line width=%d: %q", width, line)
+		}
+	}
+}
+
+func TestSummaryWidthUsesAllAvailableColumns(t *testing.T) {
+	for _, test := range []struct {
+		available int
+		want      int
+	}{
+		{available: 10, want: 20},
+		{available: 80, want: 80},
+		{available: 160, want: 160},
+	} {
+		if got := normalizeSummaryWidth(test.available); got != test.want {
+			t.Fatalf("normalizeSummaryWidth(%d)=%d, want %d", test.available, got, test.want)
+		}
+	}
+}

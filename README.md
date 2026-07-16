@@ -94,7 +94,7 @@ El formato actual es `tasks-project` versión 1:
 
 ### Resumen para el inicio de la terminal
 
-`tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.
+`tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto muestra primero el Gantt del mes actual y después resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.
 
 La salida usa el ancho disponible, nunca supera 20 filas y activa colores automáticamente solo al escribir en una terminal. Se puede controlar con `--color=always`, `--color=never` o `--no-color`.
 
@@ -106,7 +106,7 @@ if command -v tasks >/dev/null 2>&1; then
 fi
 ```
 
-Las tareas finalizadas, canceladas, eliminadas y pendientes sin fecha se omiten. Una tarea atrasada tiene vencimiento anterior a hoy. Una tarea es para hoy mientras su intervalo iniciado siga vigente, vence hoy o tenga un ciclo recurrente pendiente. Las demás tareas en un estado normal distinto del inicial se muestran como activas; cada tarea aparece una sola vez.
+El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pendientes sin fecha. Una tarea atrasada tiene vencimiento anterior a hoy. Una tarea es para hoy mientras su intervalo iniciado siga vigente, vence hoy o tenga un ciclo recurrente pendiente. Las demás tareas en un estado normal distinto del inicial se muestran como activas; cada tarea aparece una sola vez.
 
 ## Navegación
 

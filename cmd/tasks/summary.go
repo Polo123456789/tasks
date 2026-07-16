@@ -12,11 +12,15 @@ import (
 	"github.com/Polo123456789/tasks/internal/application"
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
+	"github.com/Polo123456789/tasks/internal/tui/presenter"
+	"github.com/Polo123456789/tasks/internal/tui/screens/gantt"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
 
 const summaryMaxLines = 20
+const localSummaryMaxLines = 10
 
 type summaryKind int
 
@@ -39,10 +43,16 @@ type summaryRenderOptions struct {
 	showOrigin   bool
 	partial      bool
 	originLabels map[string]string
+	maxLines     int
 }
 
 func writeSummary(ctx context.Context, output io.Writer, service *application.Service, today domain.Date, colorMode string, partial bool) error {
-	tasks, listErr := service.ListTasks(ctx, ports.TaskFilter{Sort: "updated"})
+	local := service.Mode == domain.ModeLocal
+	tasks, listErr := service.ListTasks(ctx, ports.TaskFilter{
+		IncludeDone:      local,
+		IncludeCancelled: local,
+		Sort:             "updated",
+	})
 	partial = partial || listErr != nil
 	if listErr != nil {
 		// A global summary remains useful when one registered origin is
@@ -57,8 +67,38 @@ func writeSummary(ctx context.Context, output io.Writer, service *application.Se
 		showOrigin: service.Mode == domain.ModeGlobal,
 		partial:    partial,
 	}
-	_, writeErr := io.WriteString(output, renderSummary(tasks, options))
+	if !local {
+		_, writeErr := io.WriteString(output, renderSummary(tasks, options))
+		return writeErr
+	}
+	options.maxLines = localSummaryMaxLines
+	summary := strings.TrimSuffix(renderSummary(tasks, options), "\n")
+	usedLines := strings.Count(summary, "\n") + 1
+	ganttHeight := summaryMaxLines - usedLines - 1
+	text := summary
+	if ganttHeight > 0 {
+		chart := renderSummaryGantt(tasks, options, ganttHeight)
+		text = chart + "\n\n" + summary
+	}
+	_, writeErr := io.WriteString(output, text+"\n")
 	return writeErr
+}
+
+func renderSummaryGantt(tasks []domain.Task, options summaryRenderOptions, height int) string {
+	presented := presenter.Tasks(tasks)
+	for index := range presented {
+		presented[index].Origin = ""
+		presented[index].Source = ""
+	}
+	chart := gantt.View(presented, options.today.Time(), -1, options.width, height, 1)
+	if !options.color {
+		chart = ansi.Strip(chart)
+	}
+	lines := strings.Split(chart, "\n")
+	for index := range lines {
+		lines[index] = ansi.TruncateWc(lines[index], options.width, "…")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func groupSummaryTasks(tasks []domain.Task, today domain.Date) []summaryGroup {
@@ -131,6 +171,9 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 	if options.width <= 0 {
 		options.width = 80
 	}
+	if options.maxLines <= 0 {
+		options.maxLines = summaryMaxLines
+	}
 	options.originLabels = summaryOriginLabels(tasks)
 	groups := groupSummaryTasks(tasks, options.today)
 	nonempty := groups[:0]
@@ -149,7 +192,7 @@ func renderSummary(tasks []domain.Task, options summaryRenderOptions) string {
 		if options.partial {
 			warningLines = 1
 		}
-		bodyBudget := summaryMaxLines - len(lines) - len(groups) - warningLines
+		bodyBudget := options.maxLines - len(lines) - len(groups) - warningLines
 		quotas := allocateSummaryLines(groups, bodyBudget)
 		for index, group := range groups {
 			lines = append(lines, summaryStyled(fmt.Sprintf("%s · %d", group.label, len(group.tasks)), summaryGroupStyle(group.kind), options.color))
@@ -312,9 +355,10 @@ func summaryOutputWidth(output io.Writer) int {
 			width = terminalWidth
 		}
 	}
-	if width > 100 {
-		return 100
-	}
+	return normalizeSummaryWidth(width)
+}
+
+func normalizeSummaryWidth(width int) int {
 	if width < 20 {
 		return 20
 	}

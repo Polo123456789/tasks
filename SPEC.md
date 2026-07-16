@@ -49,7 +49,8 @@ La ayuda enumera el uso sin argumentos y los comandos `init`, `ai-prompt`, `impo
 `tasks summary [--color=auto|always|never]` genera una salida compacta para banners de inicio de shell:
 
 - Usa modo local dentro de un proyecto y agrega el origen propio `Global` y los proyectos registrados en modo global.
-- Excluye tareas finalizadas, canceladas, eliminadas y pendientes sin fecha.
+- En modo local, muestra primero el Gantt del proyecto para el mes actual y después el panel de tareas relevantes; nunca muestra el Gantt en modo global.
+- El panel de tareas relevantes excluye las finalizadas, canceladas, eliminadas y pendientes sin fecha.
 - Separa, sin duplicar, tareas atrasadas, tareas correspondientes a hoy y otras tareas en estados activos.
 - Considera atrasada una tarea cuyo vencimiento es anterior a hoy.
 - Considera para hoy un intervalo ya iniciado y aún vigente, un vencimiento de hoy o un ciclo recurrente pendiente.

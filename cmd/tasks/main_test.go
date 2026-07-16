@@ -223,13 +223,16 @@ func TestSummaryCommandRendersLocalProjectWithoutOpeningTUI(t *testing.T) {
 		t.Fatalf("forced colors missing: %q", output.String())
 	}
 	plain := summaryANSI.ReplaceAllString(output.String(), "")
-	for _, expected := range []string{"tasks ·", "PARA HOY · 1", "Preparar despliegue", "alta", "vence hoy"} {
+	for _, expected := range []string{"tasks ·", "PARA HOY · 1", "Preparar despliegue", "alta", "vence hoy", "Gantt ·"} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("summary missing %q:\n%s", expected, plain)
 		}
 	}
 	if strings.Contains(plain, "[project]") || len(strings.Split(strings.TrimSuffix(plain, "\n"), "\n")) > summaryMaxLines {
 		t.Fatalf("local summary context or height is wrong:\n%s", plain)
+	}
+	if strings.Index(plain, "Gantt ·") > strings.Index(plain, "tasks ·") {
+		t.Fatalf("local Gantt should precede the task summary:\n%s", plain)
 	}
 	if _, err = os.Stat(filepath.Join(config, "tasks", "global.sqlite")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("local summary created global store: %v", err)
@@ -298,6 +301,9 @@ func TestSummaryCommandUsesRegisteredProjectsInGlobalMode(t *testing.T) {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("global summary missing %q:\n%s", expected, output.String())
 		}
+	}
+	if strings.Contains(output.String(), "Gantt ·") {
+		t.Fatalf("global summary unexpectedly included Gantt:\n%s", output.String())
 	}
 	if strings.Contains(output.String(), "\x1b[") {
 		t.Fatalf("--no-color emitted ANSI: %q", output.String())
