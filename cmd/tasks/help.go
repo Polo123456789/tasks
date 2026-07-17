@@ -17,6 +17,14 @@ const (
 	commandAddHelp
 	commandNew
 	commandNewHelp
+	commandExport
+	commandExportHelp
+	commandBackup
+	commandBackupHelp
+	commandRestore
+	commandRestoreHelp
+	commandDoctor
+	commandDoctorHelp
 	commandSummary
 	commandIsProject
 )
@@ -29,8 +37,11 @@ type invocation struct {
 	priority   string
 	start      string
 	due        string
+	format     string
 	projectSet bool
 	global     bool
+	structured bool
+	force      bool
 }
 
 const helpText = `tasks — gestor local de tareas para terminal
@@ -42,6 +53,10 @@ Uso:
   tasks import nombre.tasks [resultado.json|-]
   tasks add [--project ruta.tasks] [resultado.json|-]
   tasks new [--priority nivel] [--start AAAA-MM-DD] [--due AAAA-MM-DD] [--global|--project ruta.tasks] "Título"
+  tasks export [--format json|markdown|csv] [--global|--project ruta.tasks]
+  tasks backup [--global|--project ruta.tasks] respaldo.tasks.bak
+  tasks restore respaldo.tasks.bak [--global|--project ruta.tasks] [--force]
+  tasks doctor [--global|--project ruta.tasks] [--json]
   tasks summary [--color=auto|always|never]
   tasks is-project
   tasks help
@@ -55,16 +70,79 @@ Comandos:
   import             Crear un proyecto nuevo desde JSON en un archivo o stdin.
   add                Agregar un lote JSON. Formato: tasks add --help.
   new                Crear una tarea rápidamente. Destino contextual; vea tasks new --help.
+  export             Exportar el almacén seleccionado sin modificarlo.
+  backup             Crear un respaldo SQLite consistente y exclusivo.
+  restore            Restaurar un respaldo validado sin sobrescribir por defecto.
+  doctor             Diagnosticar esquema, integridad, permisos y registro.
   summary            Mostrar tareas relevantes y, dentro de un proyecto, su Gantt.
   is-project         Validar si el directorio pertenece al árbol de un proyecto.
   help               Mostrar esta ayuda global.
 
 Opciones:
   -h, --help         Mostrar esta ayuda global.
-	--project ...      Destino .tasks explícito para add o new.
-  --global           Usar explícitamente el almacén global con new.
+  --project ...      Seleccionar explícitamente un archivo .tasks.
+  --global           Seleccionar explícitamente el almacén global.
   --color=...        Color de summary: auto, always o never.
   --no-color         Equivalente a --color=never.
+`
+
+const exportHelpText = `tasks export — exportar datos sin modificar el almacén
+
+Uso:
+  tasks export [--format json|markdown|csv] [--project ruta.tasks]
+  tasks export [--format json|markdown|csv] --global
+
+Destino:
+  Sin selector       Usar el proyecto detectado. Fuera de un proyecto se exige --global.
+  --project ruta     Leer el archivo .tasks existente indicado.
+  --global           Leer el almacén global existente de forma explícita.
+
+Formatos:
+  json               Formato portable tasks-project versión 1 (predeterminado).
+  markdown           Lista legible con estado, planificación y relaciones.
+  csv                Una fila por tarea, apta para hojas de cálculo.
+
+La operación abre SQLite en modo de solo lectura y escribe el resultado en stdout.
+Se rechazan bases en WAL o con sidecars activos para no crear ni modificarlos.
+`
+
+const backupHelpText = `tasks backup — crear un respaldo consistente
+
+Uso:
+  tasks backup [--project ruta.tasks] respaldo.tasks.bak
+  tasks backup --global respaldo.tasks.bak
+
+Sin selector se usa el proyecto detectado; fuera de uno se exige --global.
+El destino no puede existir; se recomienda la extensión .tasks.bak para que no
+se descubra como un proyecto activo. El respaldo se publica
+atómicamente desde una instantánea consistente de SQLite y usa permisos privados.
+La fuente debe estar cerrada, en modo DELETE y sin sidecars activos.
+`
+
+const restoreHelpText = `tasks restore — restaurar un respaldo validado
+
+Uso:
+  tasks restore respaldo.tasks.bak [--project ruta.tasks] [--force]
+  tasks restore respaldo.tasks.bak --global [--force]
+
+Sin selector se restaura el proyecto detectado; fuera de uno debe indicarse
+--project o --global. Un destino nuevo se crea de forma atómica. Si ya existe,
+se rechaza salvo que --force autorice explícitamente el reemplazo. El respaldo
+se valida y, si es compatible, se migra en un archivo temporal antes de publicar.
+Fuente y destino deben estar cerrados, en modo DELETE y sin sidecars activos.
+`
+
+const doctorHelpText = `tasks doctor — diagnosticar almacenes locales
+
+Uso:
+  tasks doctor [--project ruta.tasks] [--json]
+  tasks doctor --global [--json]
+
+Sin selector se diagnostica el proyecto detectado; el almacén global siempre se
+selecciona con --global. Revisa versión y tablas, integrity_check, claves foráneas,
+permisos y, en global, el registro y sus proyectos no disponibles. --json produce
+una salida estructurada. Doctor nunca crea, migra, repara ni poda datos.
+Las bases en WAL o con sidecars activos se reportan como reparables sin abrirlas.
 `
 
 const newHelpText = `tasks new — crear una tarea rápidamente
@@ -215,6 +293,14 @@ func parseInvocation(args []string) (invocation, error) {
 		return parseAddInvocation(args[1:])
 	case "new":
 		return parseNewInvocation(args[1:])
+	case "export":
+		return parseDataInvocation(commandExport, args[1:])
+	case "backup":
+		return parseDataInvocation(commandBackup, args[1:])
+	case "restore":
+		return parseDataInvocation(commandRestore, args[1:])
+	case "doctor":
+		return parseDataInvocation(commandDoctor, args[1:])
 	case "summary":
 		parsed := invocation{kind: commandSummary, color: "auto"}
 		for _, argument := range args[1:] {
@@ -239,6 +325,114 @@ func parseInvocation(args []string) (invocation, error) {
 		}
 		return invocation{}, fmt.Errorf("comando desconocido %q. %s", args[0], helpSuggestion)
 	}
+}
+
+func parseDataInvocation(kind commandKind, arguments []string) (invocation, error) {
+	helpKinds := map[commandKind]commandKind{commandExport: commandExportHelp, commandBackup: commandBackupHelp, commandRestore: commandRestoreHelp, commandDoctor: commandDoctorHelp}
+	if len(arguments) == 1 && (arguments[0] == "-h" || arguments[0] == "--help") {
+		return invocation{kind: helpKinds[kind]}, nil
+	}
+	parsed := invocation{kind: kind}
+	formatSet := false
+	if kind == commandExport {
+		parsed.format = "json"
+	}
+	positional := ""
+	endOptions := false
+	for index := 0; index < len(arguments); index++ {
+		argument := arguments[index]
+		optionValue := func(alreadySet bool) (string, error) {
+			if alreadySet || index+1 >= len(arguments) || arguments[index+1] == "" || strings.HasPrefix(arguments[index+1], "-") {
+				return "", dataUsageError(kind)
+			}
+			index++
+			return arguments[index], nil
+		}
+		switch {
+		case endOptions:
+			if positional != "" {
+				return invocation{}, dataUsageError(kind)
+			}
+			positional = argument
+		case argument == "--":
+			if endOptions {
+				return invocation{}, dataUsageError(kind)
+			}
+			endOptions = true
+		case argument == "--global":
+			if parsed.global || parsed.projectSet {
+				return invocation{}, dataUsageError(kind)
+			}
+			parsed.global = true
+		case argument == "--project":
+			if parsed.global {
+				return invocation{}, dataUsageError(kind)
+			}
+			value, err := optionValue(parsed.projectSet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.project, parsed.projectSet = value, true
+		case strings.HasPrefix(argument, "--project="):
+			value := strings.TrimPrefix(argument, "--project=")
+			if parsed.global || parsed.projectSet || value == "" {
+				return invocation{}, dataUsageError(kind)
+			}
+			parsed.project, parsed.projectSet = value, true
+		case kind == commandExport && argument == "--format":
+			value, err := optionValue(formatSet)
+			if err != nil {
+				return invocation{}, err
+			}
+			parsed.format, formatSet = value, true
+		case kind == commandExport && strings.HasPrefix(argument, "--format="):
+			value := strings.TrimPrefix(argument, "--format=")
+			if value == "" || formatSet {
+				return invocation{}, dataUsageError(kind)
+			}
+			parsed.format, formatSet = value, true
+		case kind == commandDoctor && argument == "--json":
+			if parsed.structured {
+				return invocation{}, dataUsageError(kind)
+			}
+			parsed.structured = true
+		case kind == commandRestore && argument == "--force":
+			if parsed.force {
+				return invocation{}, dataUsageError(kind)
+			}
+			parsed.force = true
+		case strings.HasPrefix(argument, "-"):
+			return invocation{}, unknownOption(argument)
+		default:
+			if positional != "" {
+				return invocation{}, dataUsageError(kind)
+			}
+			positional = argument
+		}
+	}
+	if kind == commandExport {
+		if positional != "" || (parsed.format != "json" && parsed.format != "markdown" && parsed.format != "csv") {
+			return invocation{}, dataUsageError(kind)
+		}
+	} else if kind == commandDoctor {
+		if positional != "" {
+			return invocation{}, dataUsageError(kind)
+		}
+	} else if positional == "" {
+		return invocation{}, dataUsageError(kind)
+	}
+	parsed.source = positional
+	return parsed, nil
+}
+
+func dataUsageError(kind commandKind) error {
+	usage := map[commandKind]string{
+		commandExport:  "tasks export [--format json|markdown|csv] [--global|--project ruta.tasks]",
+		commandBackup:  "tasks backup [--global|--project ruta.tasks] respaldo.tasks.bak",
+		commandRestore: "tasks restore respaldo.tasks.bak [--global|--project ruta.tasks] [--force]",
+		commandDoctor:  "tasks doctor [--global|--project ruta.tasks] [--json]",
+	}
+	return usageError(usage[kind])
 }
 
 func parseNewInvocation(arguments []string) (invocation, error) {

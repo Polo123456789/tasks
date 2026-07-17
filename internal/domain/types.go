@@ -52,6 +52,12 @@ func (p Priority) Valid() bool { return p >= PriorityNone && p <= PriorityUrgent
 func (p Priority) String() string {
 	return [...]string{"Ninguna", "Baja", "Media", "Alta", "Urgente"}[p]
 }
+func (p Priority) Key() string {
+	if !p.Valid() {
+		return ""
+	}
+	return [...]string{"none", "low", "medium", "high", "urgent"}[p]
+}
 
 func ParsePriority(value string) (Priority, error) {
 	switch strings.TrimSpace(value) {

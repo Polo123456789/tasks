@@ -40,6 +40,9 @@ func TestParsePriority(t *testing.T) {
 	if _, err := ParsePriority(""); !errors.Is(err, ErrValidation) {
 		t.Fatalf("empty priority error=%v", err)
 	}
+	if PriorityUrgent.Key() != "urgent" || Priority(99).Key() != "" {
+		t.Fatalf("priority keys urgent=%q invalid=%q", PriorityUrgent.Key(), Priority(99).Key())
+	}
 }
 func TestRecurrence(t *testing.T) {
 	cases := []struct {

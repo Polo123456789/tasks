@@ -255,6 +255,22 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		_, e = io.WriteString(stdout, newHelpText)
 		return e
 	}
+	if invocation.kind == commandExportHelp {
+		_, e = io.WriteString(stdout, exportHelpText)
+		return e
+	}
+	if invocation.kind == commandBackupHelp {
+		_, e = io.WriteString(stdout, backupHelpText)
+		return e
+	}
+	if invocation.kind == commandRestoreHelp {
+		_, e = io.WriteString(stdout, restoreHelpText)
+		return e
+	}
+	if invocation.kind == commandDoctorHelp {
+		_, e = io.WriteString(stdout, doctorHelpText)
+		return e
+	}
 	systemClock := clock.System{}
 	if invocation.kind == commandAIPrompt {
 		_, e := io.WriteString(stdout, projectimport.Prompt(systemClock.Today()))
@@ -297,6 +313,18 @@ func runArgs(args []string, stdin io.Reader, stdout io.Writer) (resultErr error)
 		}
 		_, e = io.Copy(stdout, &encoded)
 		return e
+	}
+	if invocation.kind == commandExport {
+		return exportTasks(context.Background(), cwd, invocation, stdout)
+	}
+	if invocation.kind == commandBackup {
+		return backupTasks(context.Background(), cwd, invocation, stdout)
+	}
+	if invocation.kind == commandRestore {
+		return restoreTasks(context.Background(), cwd, invocation, stdout)
+	}
+	if invocation.kind == commandDoctor {
+		return doctorTasks(context.Background(), cwd, invocation, stdout)
 	}
 	data, e := os.UserConfigDir()
 	if e != nil {

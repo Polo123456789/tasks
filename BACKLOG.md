@@ -41,7 +41,7 @@ Criterios de aceptación:
 - Formularios, selectores y confirmaciones abiertos siguen teniendo precedencia clara.
 - Es completamente operable con teclado y respeta el alto disponible.
 
-## B-003 — Exportación, respaldo y diagnóstico
+## B-003 — Exportación, respaldo y diagnóstico — Completada
 
 Hacer explícitas la portabilidad, recuperación y verificación de los datos.
 

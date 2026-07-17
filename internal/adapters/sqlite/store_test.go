@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +14,6 @@ import (
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
 	"github.com/Polo123456789/tasks/internal/projectimport"
-	"path/filepath"
 )
 
 func testStore(t *testing.T) *Store {
@@ -136,6 +137,122 @@ func TestImportProjectDefensivelyRejectsDependencyCycle(t *testing.T) {
 	var count int
 	if err := s.db.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("task count=%d err=%v", count, err)
+	}
+}
+
+func TestReadOnlyExportProducesPortableRoundTripWithoutTrash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.tasks")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := domain.ParseDate("2026-07-20")
+	due, _ := domain.ParseDate("2026-07-22")
+	seed := projectimport.ProjectSeed{
+		Statuses: []projectimport.StatusSeed{{Key: "todo", Name: "Por hacer", Initial: true}, {Key: "doing", Name: "En curso"}},
+		Tasks: []projectimport.TaskSeed{
+			{Key: "base", StatusKey: projectimport.StatusDone, Task: domain.Task{Title: "Base", Priority: domain.PriorityHigh, Markdown: "# Contexto", Start: &start, Due: &due}},
+			{Key: "delivery", StatusKey: "doing", Task: domain.Task{Title: "Entrega"}, Subtasks: []projectimport.SubtaskSeed{{Title: "Detalle", StatusKey: "todo"}}, DependsOn: []string{"base"}},
+		},
+	}
+	if _, err = store.ImportProject(context.Background(), seed, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	trashed, err := store.CreateTask(context.Background(), domain.Task{Title: "No exportar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.TrashTask(context.Background(), trashed.ID, trashed.Version, start); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	readOnly, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := readOnly.ExportProject(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readOnly.CreateTask(context.Background(), domain.Task{Title: "write"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "readonly") {
+		t.Fatalf("read-only store accepted a write: %v", err)
+	}
+	if err = readOnly.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if document.Format != projectimport.Format || document.Version != projectimport.Version || len(document.Statuses) != 2 || len(document.Tasks) != 2 {
+		t.Fatalf("document=%#v", document)
+	}
+	normalized, err := projectimport.Normalize(document, start)
+	if err != nil {
+		t.Fatalf("export is not portable: %#v err=%v", document, err)
+	}
+	if normalized.Tasks[0].Task.Title != "Base" || normalized.Tasks[0].Task.Priority != domain.PriorityHigh || normalized.Tasks[1].StatusKey == "" || len(normalized.Tasks[1].Subtasks) != 1 || len(normalized.Tasks[1].DependsOn) != 1 {
+		t.Fatalf("normalized export=%#v", normalized)
+	}
+}
+
+func TestInspectClassifiesSchemaAndIntegrityWithoutMigrating(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.tasks")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.Exec("DROP TABLE project_config; PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := Inspect(context.Background(), path)
+	if err != nil || inspection.SchemaVersion != 1 || inspection.Integrity != "ok" || len(inspection.MissingTables) != 0 {
+		t.Fatalf("inspection=%#v err=%v", inspection, err)
+	}
+	if _, err = OpenReadOnly(path); err == nil || !strings.Contains(err.Error(), "requires migration") {
+		t.Fatalf("old read-only open error=%v", err)
+	}
+	inspection, err = Inspect(context.Background(), path)
+	if err != nil || inspection.SchemaVersion != 1 {
+		t.Fatalf("inspection migrated the source: %#v err=%v", inspection, err)
+	}
+}
+
+func TestBackupIsConsistentPrivateAndNeverOverwrites(t *testing.T) {
+	store := testStore(t)
+	created, err := store.CreateTask(context.Background(), domain.Task{Title: "Respaldada", Priority: domain.PriorityUrgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "backup.tasks")
+	if err = store.Backup(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("backup info=%#v err=%v", info, err)
+	}
+	backup, err := OpenReadOnly(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := backup.Task(context.Background(), created.ID)
+	closeErr := backup.Close()
+	if err != nil || closeErr != nil || task.Title != created.Title || task.Priority != domain.PriorityUrgent {
+		t.Fatalf("task=%#v err=%v close=%v", task, err, closeErr)
+	}
+	original, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Backup(context.Background(), target); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("overwrite error=%v", err)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || !reflect.DeepEqual(after, original) {
+		t.Fatalf("existing backup changed: err=%v", err)
 	}
 }
 

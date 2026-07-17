@@ -24,13 +24,51 @@ func TestGlobalHelpAliasesMatchWithoutCreatingConfiguration(t *testing.T) {
 			t.Fatalf("%s output differs from global help", argument)
 		}
 	}
-	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks add [--project ruta.tasks]", "tasks add --help", "tasks new [--priority nivel]", "tasks summary", "tasks is-project", "--project", "--global", "--color=", "-h, --help"} {
+	for _, text := range []string{"tasks — gestor local", "tasks init nombre.tasks", "tasks ai-prompt", "tasks import nombre.tasks", "tasks add [--project ruta.tasks]", "tasks add --help", "tasks new [--priority nivel]", "tasks export [--format", "tasks backup", "tasks restore", "tasks doctor", "tasks summary", "tasks is-project", "--project", "--global", "--color=", "-h, --help"} {
 		if !strings.Contains(expected, text) {
 			t.Fatalf("help missing %q", text)
 		}
 	}
 	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("help created configuration: %v", err)
+	}
+}
+
+func TestDataCommandHelpExplainsSafetyWithoutCreatingConfiguration(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", config)
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{"export", []string{"solo lectura", "json|markdown|csv", "stdout", "Fuera de un proyecto"}},
+		{"backup", []string{"consistente", "no puede existir", "atómicamente", "--global"}},
+		{"restore", []string{"valida", "--force", "reemplazo", "temporal"}},
+		{"doctor", []string{"integrity_check", "permisos", "registro", "nunca crea"}},
+	}
+	for _, test := range tests {
+		t.Run(test.command, func(t *testing.T) {
+			var expected string
+			for _, alias := range []string{"-h", "--help"} {
+				var output bytes.Buffer
+				if err := runArgs([]string{test.command, alias}, strings.NewReader(""), &output); err != nil {
+					t.Fatal(err)
+				}
+				if expected == "" {
+					expected = output.String()
+				} else if output.String() != expected {
+					t.Fatalf("%s help aliases differ", test.command)
+				}
+			}
+			for _, want := range test.want {
+				if !strings.Contains(expected, want) {
+					t.Fatalf("%s help missing %q:\n%s", test.command, want, expected)
+				}
+			}
+		})
+	}
+	if _, err := os.Stat(config); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("data command help created configuration: %v", err)
 	}
 }
 
@@ -116,6 +154,15 @@ func TestParseInvocationRejectsUnknownCommandsOptionsAndBadArity(t *testing.T) {
 		{name: "new conflicting destination", args: []string{"new", "--global", "--project", "a.tasks", "title"}, want: "uso: tasks new"},
 		{name: "new duplicate priority", args: []string{"new", "--priority", "low", "--priority=high", "title"}, want: "uso: tasks new"},
 		{name: "new extra title", args: []string{"new", "one", "two"}, want: "uso: tasks new"},
+		{name: "export bad format", args: []string{"export", "--format", "xml"}, want: "uso: tasks export"},
+		{name: "export positional", args: []string{"export", "output.json"}, want: "uso: tasks export"},
+		{name: "backup missing output", args: []string{"backup", "--global"}, want: "uso: tasks backup"},
+		{name: "backup force", args: []string{"backup", "--force", "x.tasks"}, want: `opción desconocida "--force"`},
+		{name: "restore missing source", args: []string{"restore", "--global"}, want: "uso: tasks restore"},
+		{name: "restore duplicate force", args: []string{"restore", "x.tasks", "--force", "--force"}, want: "uso: tasks restore"},
+		{name: "doctor positional", args: []string{"doctor", "x.tasks"}, want: "uso: tasks doctor"},
+		{name: "doctor duplicate json", args: []string{"doctor", "--json", "--json"}, want: "uso: tasks doctor"},
+		{name: "data destination conflict", args: []string{"export", "--global", "--project", "x.tasks"}, want: "uso: tasks export"},
 		{name: "help option", args: []string{"help", "--missing"}, want: `opción desconocida "--missing"`},
 		{name: "help argument", args: []string{"help", "import"}, want: "uso: tasks help"},
 		{name: "init missing", args: []string{"init"}, want: "uso: tasks init nombre.tasks"},
@@ -177,6 +224,22 @@ func TestParseInvocationPreservesTUIAndImportStdin(t *testing.T) {
 	invocation, err = parseInvocation([]string{"new", "--help"})
 	if err != nil || invocation.kind != commandNewHelp {
 		t.Fatalf("new help invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"export", "--project=project.tasks", "--format", "csv"})
+	if err != nil || invocation.kind != commandExport || invocation.project != "project.tasks" || !invocation.projectSet || invocation.format != "csv" {
+		t.Fatalf("export invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"backup", "--global", "backup.tasks"})
+	if err != nil || invocation.kind != commandBackup || !invocation.global || invocation.source != "backup.tasks" {
+		t.Fatalf("backup invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"restore", "backup.tasks", "--project", "restored.tasks", "--force"})
+	if err != nil || invocation.kind != commandRestore || invocation.source != "backup.tasks" || invocation.project != "restored.tasks" || !invocation.projectSet || !invocation.force {
+		t.Fatalf("restore invocation=%#v err=%v", invocation, err)
+	}
+	invocation, err = parseInvocation([]string{"doctor", "--global", "--json"})
+	if err != nil || invocation.kind != commandDoctor || !invocation.global || !invocation.structured {
+		t.Fatalf("doctor invocation=%#v err=%v", invocation, err)
 	}
 	for _, test := range []struct {
 		args []string

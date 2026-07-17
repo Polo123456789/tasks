@@ -427,4 +427,49 @@ func TestE2EImportCommandCreatesRegisteredProjectAndExits(t *testing.T) {
 	if err != nil || closeErr != nil || quickGlobalTask.Title != "Captura global" {
 		t.Fatalf("quick global task=%#v err=%v close=%v", quickGlobalTask, err, closeErr)
 	}
+
+	exportCommand := exec.Command(binary, "export", "--project", "imported.tasks", "--format", "json")
+	exportCommand.Dir = projectDir
+	exportCommand.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	exportOutput, err := exportCommand.CombinedOutput()
+	if err != nil || !strings.Contains(string(exportOutput), `"format": "tasks-project"`) || !strings.Contains(string(exportOutput), `"Captura local"`) {
+		t.Fatalf("export err=%v output=%s", err, exportOutput)
+	}
+
+	backupCommand := exec.Command(binary, "backup", "--project", "imported.tasks", "snapshot.tasks.bak")
+	backupCommand.Dir = projectDir
+	backupCommand.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	backupOutput, err := backupCommand.CombinedOutput()
+	if err != nil || !strings.Contains(string(backupOutput), "Respaldo creado") {
+		t.Fatalf("backup err=%v output=%s", err, backupOutput)
+	}
+	backupPath := filepath.Join(projectDir, "snapshot.tasks.bak")
+	if _, err = os.Stat(backupPath); err != nil {
+		t.Fatal(err)
+	}
+
+	doctorCommand := exec.Command(binary, "doctor", "--project", "imported.tasks", "--json")
+	doctorCommand.Dir = projectDir
+	doctorCommand.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	doctorOutput, err := doctorCommand.CombinedOutput()
+	if err != nil || !strings.Contains(string(doctorOutput), `"ok": true`) || !strings.Contains(string(doctorOutput), `"almacén.integridad"`) {
+		t.Fatalf("doctor err=%v output=%s", err, doctorOutput)
+	}
+
+	restoreCommand := exec.Command(binary, "restore", "snapshot.tasks.bak", "--project", "restored.tasks")
+	restoreCommand.Dir = projectDir
+	restoreCommand.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+config)
+	restoreOutput, err := restoreCommand.CombinedOutput()
+	if err != nil || !strings.Contains(string(restoreOutput), "Restaurado") {
+		t.Fatalf("restore err=%v output=%s", err, restoreOutput)
+	}
+	restoredStore, err := db.Open(filepath.Join(projectDir, "restored.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredTask, err := restoredStore.Task(context.Background(), 3)
+	closeErr = restoredStore.Close()
+	if err != nil || closeErr != nil || restoredTask.Title != "Captura local" {
+		t.Fatalf("restored task=%#v err=%v close=%v", restoredTask, err, closeErr)
+	}
 }

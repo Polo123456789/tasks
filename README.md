@@ -149,6 +149,32 @@ Prioridades válidas: `none`, `low`, `medium`, `high` y `urgent`. Las fechas usa
 
 Si un título comienza por guion, separe las opciones con `--`, por ejemplo `tasks new -- "-Seguimiento"`. En la salida, `destination.path` aparece únicamente para destinos de proyecto; el origen global se identifica con `{"kind":"global"}`.
 
+## Exportación, respaldo y diagnóstico
+
+Los comandos de datos usan el proyecto detectado por defecto. Fuera de un proyecto, el almacén global debe seleccionarse explícitamente con `--global`; también se puede indicar cualquier proyecto con `--project ruta.tasks`.
+
+```sh
+tasks export --format json > proyecto.json
+tasks export --format markdown
+tasks export --format csv
+tasks backup respaldo.tasks.bak
+tasks doctor
+tasks doctor --global --json
+```
+
+`export` abre el almacén en modo de solo lectura. JSON usa el formato portable `tasks-project` versión 1; Markdown y CSV ofrecen representaciones legibles. `backup` crea una instantánea SQLite consistente, privada y publicada atómicamente; el destino no puede existir. Se recomienda `.tasks.bak` para que el descubrimiento no confunda un respaldo con un proyecto activo. Para garantizar que estas operaciones y `doctor` no creen ni modifiquen sidecars, rechazan bases en modo WAL o con archivos `-wal`, `-shm` o `-journal`: cierre los procesos que las usan, complete el checkpoint y vuelva al modo `DELETE` antes de reintentar.
+
+`restore` valida integridad, claves foráneas, tablas y versión antes de publicar. Puede crear un proyecto nuevo o restaurar el almacén global explícito. Nunca reemplaza un destino existente salvo con `--force`:
+
+```sh
+tasks restore respaldo.tasks.bak --project recuperado.tasks
+tasks restore respaldo.tasks.bak --global --force
+```
+
+Los proyectos restaurados se registran. Una versión antigua compatible se migra en staging; una versión futura incompatible o una base corrupta se rechaza sin tocar el destino.
+
+`doctor` no crea, migra, repara ni poda. Revisa versión del esquema, tablas, `integrity_check`, claves foráneas y permisos. Con `--global` también inspecciona el registro y cada proyecto registrado, distinguiendo problemas `repairable`, `incompatible` y `corruption`. La salida humana es predeterminada y `--json` ofrece un contrato estructurado para automatización; cualquier advertencia o error produce estado no saludable.
+
 ### Resumen para el inicio de la terminal
 
 `tasks summary` imprime un panel no interactivo con las tareas atrasadas, las que corresponden al ciclo o intervalo vigente hoy y las que están en un estado activo. Dentro de un proyecto muestra primero el Gantt del mes actual y después resume solo ese archivo; fuera de uno agrega el origen `Global` y los proyectos registrados e identifica cada tarea por origen.

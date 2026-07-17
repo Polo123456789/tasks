@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "modernc.org/sqlite"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+
+	adaptersqlite "github.com/Polo123456789/tasks/internal/adapters/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 type SQLite struct{ db *sql.DB }
@@ -25,6 +29,10 @@ func Open(path string) (*SQLite, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = os.Chmod(path, 0600); e != nil {
+		db.Close()
+		return nil, e
+	}
 	return &SQLite{db}, nil
 }
 func (r *SQLite) Register(ctx context.Context, path string) error {
@@ -38,6 +46,25 @@ func (r *SQLite) Register(ctx context.Context, path string) error {
 	}
 	_, e = r.db.ExecContext(ctx, "INSERT OR IGNORE INTO projects(path) VALUES(?)", p)
 	return e
+}
+func (r *SQLite) Unregister(ctx context.Context, path string) error {
+	p, e := filepath.Abs(path)
+	if e != nil {
+		return e
+	}
+	_, e = r.db.ExecContext(ctx, "DELETE FROM projects WHERE path=?", filepath.Clean(p))
+	return e
+}
+func (r *SQLite) CheckWritable(ctx context.Context) error {
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO projects(path) VALUES(?)", "/.tasks-registry-write-check"); e != nil {
+		return e
+	}
+	return tx.Rollback()
 }
 func (r *SQLite) Projects(ctx context.Context) ([]string, error) {
 	rows, e := r.db.QueryContext(ctx, "SELECT path FROM projects ORDER BY path")
@@ -80,3 +107,75 @@ func (r *SQLite) Prune(ctx context.Context) ([]string, error) {
 	return live, errors.Join(errs...)
 }
 func (r *SQLite) Close() error { return r.db.Close() }
+
+type Inspection struct {
+	Paths     []string
+	Integrity string
+}
+
+// InspectReadOnly inspects an existing registry without creating directories,
+// files, tables, journals, or pruning unavailable entries.
+func InspectReadOnly(ctx context.Context, path string) (inspection Inspection, resultErr error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return inspection, err
+	}
+	if _, err = os.Stat(absolute); err != nil {
+		return inspection, err
+	}
+	if err = adaptersqlite.EnsureQuiescent(absolute); err != nil {
+		return inspection, err
+	}
+	dsn := (&url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=ro"}).String()
+	database, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return inspection, err
+	}
+	database.SetMaxOpenConns(1)
+	defer func() { resultErr = errors.Join(resultErr, database.Close()) }()
+	if _, err = database.ExecContext(ctx, "PRAGMA query_only=ON; PRAGMA busy_timeout=3000"); err != nil {
+		return inspection, err
+	}
+	rows, err := database.QueryContext(ctx, "PRAGMA integrity_check")
+	if err != nil {
+		return inspection, err
+	}
+	var messages []string
+	for rows.Next() {
+		var message string
+		if err = rows.Scan(&message); err != nil {
+			rows.Close()
+			return inspection, err
+		}
+		messages = append(messages, message)
+	}
+	if err = rows.Close(); err != nil {
+		return inspection, err
+	}
+	inspection.Integrity = strings.Join(messages, "; ")
+	var exists int
+	if err = database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='projects')").Scan(&exists); err != nil {
+		return inspection, err
+	}
+	if exists == 0 {
+		return inspection, fmt.Errorf("registry schema is missing projects table")
+	}
+	rows, err = database.QueryContext(ctx, "SELECT path FROM projects ORDER BY path")
+	if err != nil {
+		return inspection, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var project string
+		if err = rows.Scan(&project); err != nil {
+			return inspection, err
+		}
+		inspection.Paths = append(inspection.Paths, project)
+	}
+	return inspection, rows.Err()
+}
+
+func ProjectsReadOnly(ctx context.Context, path string) ([]string, error) {
+	inspection, err := InspectReadOnly(ctx, path)
+	return inspection.Paths, err
+}

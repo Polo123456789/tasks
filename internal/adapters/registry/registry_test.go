@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -70,5 +72,74 @@ func TestPruneKeepsEntryWhenFilesystemCheckFailsTransiently(t *testing.T) {
 	paths, err := registry.Projects(context.Background())
 	if err != nil || !reflect.DeepEqual(paths, []string{loop}) {
 		t.Fatalf("transient failure removed registry entry: paths=%v err=%v", paths, err)
+	}
+}
+
+func TestProjectsReadOnlyDoesNotCreateOrPruneRegistry(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing", "registry.sqlite")
+	if _, err := ProjectsReadOnly(context.Background(), missing); !os.IsNotExist(err) {
+		t.Fatalf("missing registry error=%v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !os.IsNotExist(err) {
+		t.Fatalf("read-only inspection created directory: %v", err)
+	}
+	path := filepath.Join(root, "registry.sqlite")
+	registry, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "gone.tasks")
+	if _, err = registry.db.Exec("INSERT INTO projects(path) VALUES(?)", project); err != nil {
+		t.Fatal(err)
+	}
+	if err = registry.Close(); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := ProjectsReadOnly(context.Background(), path)
+	if err != nil || !reflect.DeepEqual(paths, []string{project}) {
+		t.Fatalf("paths=%v err=%v", paths, err)
+	}
+	inspection, err := InspectReadOnly(context.Background(), path)
+	if err != nil || inspection.Integrity != "ok" || !reflect.DeepEqual(inspection.Paths, []string{project}) {
+		t.Fatalf("inspection=%#v err=%v", inspection, err)
+	}
+	registry, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+	paths, err = registry.Projects(context.Background())
+	if err != nil || !reflect.DeepEqual(paths, []string{project}) {
+		t.Fatalf("read-only inspection pruned entry: paths=%v err=%v", paths, err)
+	}
+}
+
+func TestProjectsReadOnlyRejectsWALWithoutCreatingSHM(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "registry.sqlite")
+	registry, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = registry.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err = database.Exec("PRAGMA journal_mode=WAL; INSERT INTO projects(path) VALUES('/wal.tasks')"); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(path + "-shm"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ProjectsReadOnly(context.Background(), path); err == nil {
+		t.Fatal("WAL registry was inspected as quiescent")
+	}
+	if _, err = os.Lstat(path + "-shm"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only registry inspection created SHM: %v", err)
 	}
 }
