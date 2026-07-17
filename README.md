@@ -168,6 +168,7 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 ## Navegación
 
 - La cabecera indica siempre si se está en modo local o global y, en local, el proyecto abierto.
+- `Ctrl+P`: abrir la paleta contextual; escribir busca por nombre, descripción o sinónimos, `↑`/`↓` selecciona, `Enter` ejecuta y `Esc` cancela.
 - El pie muestra siempre todas las teclas válidas en el contexto actual y cambia con la vista, selección, formulario, selector o confirmación. `F1` abre además un mapa general opcional; `↑`/`↓` desplazan esa ayuda.
 - `←`/`→` o `h`/`l`: cambiar vista; `↑`/`↓` o `j`/`k`: seleccionar un elemento visible.
 - `PgUp` / `PgDn`: periodo anterior/siguiente en Calendario y Gantt.
@@ -187,6 +188,8 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 Las operaciones que relacionan elementos no requieren memorizar IDs: dependencias, filtro local por estado y destino al eliminar un estado presentan selectores con ID, título y estado. Los IDs permanecen visibles en Tabla, detalle y Estados para diagnóstico.
 
 En modo global, `n` crea siempre en el origen propio. Las acciones de creación anidada aparecen para tareas globales y muestran una explicación cuando la tarea pertenece a un proyecto registrado. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
+
+La paleta muestra primero los comandos disponibles para la vista, selección y origen actuales. Los demás resultados explican por qué no están disponibles y conservan visible su atajo. Ejecutar desde la paleta recorre exactamente el mismo manejador que pulsar ese atajo; al cancelar no cambian la selección, los filtros ni el periodo visible. Los formularios, selectores, confirmaciones, historial y ayuda ya abiertos tienen precedencia sobre `Ctrl+P`.
 
 La terminal mínima soportada es de 90 columnas por 40 filas (`90x40`). El cuerpo reserva dinámicamente el espacio ocupado por el pie contextual multilínea.
 

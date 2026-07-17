@@ -88,7 +88,7 @@ func Footer(context Context) string {
 			"Visibilidad F mostrar/ocultar finalizadas · X mostrar/ocultar canceladas",
 		)
 	}
-	lines = append(lines, "Ayuda      F1 mapa general (opcional)")
+	lines = append(lines, "Paleta     Ctrl+P buscar y ejecutar comandos", "Ayuda      F1 mapa general (opcional)")
 	return strings.Join(lines, "\n")
 }
 
@@ -122,6 +122,7 @@ func Full(global bool) string {
 		"Otras acciones",
 		"  c recurrencia     u restaurar     r recargar     ,/. desplazar Gantt",
 		"  Estados: a crear, e renombrar, i inicial, [/] ordenar, d eliminar",
+		"  Ctrl+P abrir paleta contextual de comandos",
 	}
 	return strings.Join(sections, "\n")
 }

@@ -129,6 +129,10 @@ type Model struct {
 	historyOpen                   bool
 	helpOpen                      bool
 	helpScroll                    int
+	paletteOpen                   bool
+	paletteQuery                  string
+	paletteSelected               int
+	paletteNotice                 string
 	pickerOpen                    bool
 	pickerAction                  string
 	pickerOptions                 []pickerOption
@@ -260,12 +264,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitForDayCheck()
 	case historyLoaded:
+		m.closePalette()
 		m.err = v.err
 		if v.err == nil {
 			m.history = v.events
 			m.historyOpen = true
 		}
 	case pickerLoaded:
+		m.closePalette()
 		m.loading = false
 		m.err = v.err
 		if v.err == nil {
@@ -293,6 +299,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.waitForDayCheck()
 		}
 	case trashImpact:
+		m.closePalette()
 		m.loading = false
 		m.err = v.err
 		if v.err == nil {
@@ -329,6 +336,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Type == tea.KeyCtrlC {
 			m.cancelDayWatch()
 			return m, tea.Quit
+		}
+		if m.paletteOpen {
+			return m.updatePalette(v)
 		}
 		if v.String() == "f1" {
 			m.helpOpen = !m.helpOpen
@@ -384,6 +394,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.inputMode {
 			return m.updateInput(v)
+		}
+		if v.Type == tea.KeyCtrlP {
+			m.openPalette()
+			return m, nil
 		}
 		refreshDetail := false
 		switch v.String() {
@@ -1369,7 +1383,9 @@ func (m Model) View() string {
 			body = historyscreen.View(m.history, availableHeight)
 		}
 	}
-	if m.helpOpen {
+	if m.paletteOpen {
+		body = m.paletteView(availableHeight)
+	} else if m.helpOpen {
 		body = theme.Border.Render(m.helpView(availableHeight))
 	} else if m.pickerOpen {
 		body = m.pickerView(availableHeight)
@@ -1378,6 +1394,9 @@ func (m Model) View() string {
 }
 
 func (m Model) footerContent() string {
+	if m.paletteOpen {
+		return "PALETA    Escribir para buscar · ↑/↓ elegir · Enter ejecutar · Esc cancelar"
+	}
 	if m.helpOpen {
 		return "AYUDA     ↑/↓ línea · PgUp/PgDn página · F1 o Esc cerrar · q salir"
 	}

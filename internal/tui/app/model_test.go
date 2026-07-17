@@ -9,7 +9,9 @@ import (
 
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
+	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type fakeBackend struct {
@@ -197,6 +199,8 @@ func (b *fakeBackend) Restore(context.Context, string, int64, int64) (domain.Tas
 func key(value string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
 }
+
+func ctrlP() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlP} }
 
 func TestGlobalNavigationNeverEntersKanban(t *testing.T) {
 	backend := &fakeBackend{mode: domain.ModeGlobal}
@@ -850,5 +854,238 @@ func TestReloadPreservesSelectedTaskIdentityAfterResorting(t *testing.T) {
 	model = updated.(Model)
 	if model.selected != 0 || model.tasks[model.selected].ID != second.ID {
 		t.Fatalf("selected index=%d task=%#v", model.selected, model.tasks[model.selected])
+	}
+}
+
+func TestCommandPaletteSearchesNamesDescriptionsAndSynonyms(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Version: 1}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(ctrlP())
+	model = updated.(Model)
+	if !model.paletteOpen {
+		t.Fatal("Ctrl+P did not open the command palette")
+	}
+	for _, query := range []string{"Editar título", "Modificar el título", "título renombrar", "editar titulo"} {
+		model.paletteQuery = query
+		entries := model.paletteEntries()
+		found := false
+		for _, entry := range entries {
+			found = found || entry.Action.Name == "Editar título"
+		}
+		if !found {
+			t.Fatalf("query %q did not find Editar título: %#v", query, entries)
+		}
+	}
+}
+
+func TestCommandPaletteNavigationAvailabilityMatchesVisibleViewportAndEdges(t *testing.T) {
+	dueOutsideMonth, _ := domain.ParseDate("2027-01-20")
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{{ID: 1, Title: "outside", Due: &dueOutsideMonth}}}
+	model := NewAt(backend, "calendar")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	model.paletteQuery = "seleccionar"
+	for _, entry := range model.paletteEntries() {
+		if (entry.Action.Name == "Seleccionar siguiente" || entry.Action.Name == "Seleccionar anterior") && entry.Enabled {
+			t.Fatalf("invisible calendar navigation marked available: %#v", entry)
+		}
+	}
+
+	statusBackend := &fakeBackend{mode: domain.ModeLocal}
+	model = NewAt(statusBackend, "settings")
+	model.statuses = []domain.Status{{ID: 1, Name: "Primero", Kind: domain.StatusNormal}, {ID: 2, Name: "Último", Kind: domain.StatusNormal}}
+	model.selected = 0
+	if enabled, _ := model.paletteAvailability(paletteNormalStatusLeft); enabled {
+		t.Fatal("first status can incorrectly move left")
+	}
+	if enabled, _ := model.paletteAvailability(paletteNormalStatusRight); !enabled {
+		t.Fatal("first status should be able to move right")
+	}
+
+	detailTask := domain.Task{ID: 1, Title: "parent", Subtasks: []domain.Subtask{{ID: 2, Title: "only"}}}
+	model = NewAt(&fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{detailTask}}, "table")
+	model.tasks = presenter.Tasks([]domain.Task{detailTask})
+	model.detail = &detailTask
+	if enabled, _ := model.paletteAvailability(paletteSubtaskNext); enabled {
+		t.Fatal("only subtask can incorrectly move next")
+	}
+	if enabled, _ := model.paletteAvailability(paletteSubtaskPrevious); enabled {
+		t.Fatal("only subtask can incorrectly move previous")
+	}
+}
+
+func TestCommandPaletteSortsAvailableActionsFirstAndExplainsDisabledOnes(t *testing.T) {
+	model := NewAt(&fakeBackend{mode: domain.ModeLocal}, "table")
+	model.loading = false
+	model.width, model.height = 100, 40
+	model.paletteOpen = true
+	model.paletteQuery = "título"
+	entries := model.paletteEntries()
+	if len(entries) < 2 || entries[0].Action.Name != "Buscar por título" || !entries[0].Enabled {
+		t.Fatalf("available action is not first: %#v", entries)
+	}
+	foundDisabled := false
+	for _, entry := range entries {
+		if entry.Action.Name == "Editar título" {
+			foundDisabled = !entry.Enabled && strings.Contains(entry.Reason, "selecciona una tarea")
+		}
+	}
+	if !foundDisabled || !strings.Contains(model.View(), "No disponible: selecciona una tarea") {
+		t.Fatalf("disabled reason missing; entries=%#v\n%s", entries, model.View())
+	}
+}
+
+func TestCommandPaletteExecutesTheExistingShortcutPath(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Version: 1}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(ctrlP())
+	model = updated.(Model)
+	updated, _ = model.Update(key("avanzar la prioridad"))
+	model = updated.(Model)
+	entries := model.paletteEntries()
+	if len(entries) != 1 || entries[0].Action.Name != "Cambiar prioridad" || !entries[0].Enabled {
+		t.Fatalf("priority search entries=%#v", entries)
+	}
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if model.paletteOpen || command == nil {
+		t.Fatalf("paletteOpen=%v command=%v", model.paletteOpen, command != nil)
+	}
+	message, ok := command().(mutated)
+	if !ok || message.err != nil || backend.priorityCalls != 1 {
+		t.Fatalf("message=%#v priority calls=%d", message, backend.priorityCalls)
+	}
+}
+
+func TestCancellingCommandPalettePreservesContext(t *testing.T) {
+	first := domain.Task{ID: 1, Title: "first"}
+	second := domain.Task{ID: 2, Title: "second"}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{first, second}}
+	model := NewAt(backend, "gantt")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	model.selected = 1
+	model.selectedSubtask = 3
+	model.filter.Query = "original"
+	model.ganttStartDay = 15
+	month := model.calendarMonth
+	updated, _ = model.Update(ctrlP())
+	model = updated.(Model)
+	updated, _ = model.Update(key("prioridad"))
+	model = updated.(Model)
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	if command != nil || model.paletteOpen || model.selected != 1 || model.selectedSubtask != 3 || model.filter.Query != "original" || model.ganttStartDay != 15 || !model.calendarMonth.Equal(month) {
+		t.Fatalf("context changed on cancel: %#v", model)
+	}
+}
+
+func TestTransientInteractionsTakePrecedenceOverCommandPalette(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task"}
+	base := NewAt(&fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}, "table")
+	base.tasks = presenter.Tasks([]domain.Task{task})
+	states := map[string]func(*Model){
+		"input":        func(m *Model) { m.inputMode = true; m.inputAction = "edit" },
+		"picker":       func(m *Model) { m.openPicker("filter-status", presenter.Task{}, []pickerOption{{Label: "Todos"}}) },
+		"history":      func(m *Model) { m.historyOpen = true },
+		"confirmation": func(m *Model) { selected := m.tasks[0]; m.confirmTrash = &selected },
+		"help":         func(m *Model) { m.helpOpen = true },
+	}
+	for name, prepare := range states {
+		t.Run(name, func(t *testing.T) {
+			model := base
+			prepare(&model)
+			updated, _ := model.Update(ctrlP())
+			model = updated.(Model)
+			if model.paletteOpen {
+				t.Fatalf("palette opened over %s", name)
+			}
+		})
+	}
+}
+
+func TestAsyncTransientResultsCloseCommandPaletteAndTakePrecedence(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Version: 1, Origin: domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"}}
+	other := domain.Task{ID: 2, Title: "other", Version: 1, Origin: task.Origin}
+	for _, test := range []struct {
+		name     string
+		startKey string
+		backend  *fakeBackend
+		opened   func(Model) bool
+	}{
+		{name: "history", startKey: "H", backend: &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task, other}}, opened: func(m Model) bool { return m.historyOpen }},
+		{name: "picker", startKey: "g", backend: &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task, other}}, opened: func(m Model) bool { return m.pickerOpen }},
+		{name: "confirmation", startKey: "d", backend: &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task, other}, impact: []int64{2}}, opened: func(m Model) bool { return m.confirmTrash != nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := NewAt(test.backend, "table")
+			updated, _ := model.Update(loaded{tasks: test.backend.tasks})
+			model = updated.(Model)
+			updated, pending := model.Update(key(test.startKey))
+			model = updated.(Model)
+			if pending == nil {
+				t.Fatalf("%s did not start an asynchronous interaction", test.startKey)
+			}
+			updated, _ = model.Update(ctrlP())
+			model = updated.(Model)
+			if !model.paletteOpen {
+				t.Fatal("palette did not open while result was pending")
+			}
+			updated, _ = model.Update(pending())
+			model = updated.(Model)
+			if model.paletteOpen || !test.opened(model) {
+				t.Fatalf("async modal did not take precedence: palette=%v model=%#v", model.paletteOpen, model)
+			}
+		})
+	}
+}
+
+func TestCommandPaletteOpensInEveryReachableViewAndFitsMinimumTerminal(t *testing.T) {
+	for _, test := range []struct {
+		mode  domain.Mode
+		views []int
+	}{{domain.ModeLocal, []int{0, 1, 2, 3, 4, 5}}, {domain.ModeGlobal, []int{2, 3, 4}}} {
+		for _, view := range test.views {
+			backend := &fakeBackend{mode: test.mode}
+			model := New(backend)
+			model.view = view
+			model.loading = false
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+			model = updated.(Model)
+			updated, _ = model.Update(ctrlP())
+			model = updated.(Model)
+			if !model.paletteOpen {
+				t.Fatalf("mode=%s view=%d did not open palette", test.mode, view)
+			}
+			palette := model.paletteView(36)
+			if width, height := lipgloss.Width(palette), lipgloss.Height(palette); width > 90 || height > 36 {
+				t.Fatalf("mode=%s view=%d palette rendered %dx%d:\n%s", test.mode, view, width, height, palette)
+			}
+			if lines := strings.Count(model.View(), "\n") + 1; lines > 40 {
+				t.Fatalf("mode=%s view=%d full view rendered %d lines:\n%s", test.mode, view, lines, model.View())
+			}
+		}
+	}
+}
+
+func TestCommandPaletteTruncatesLongQueryAndDisabledReasonToTerminalWidth(t *testing.T) {
+	model := NewAt(&fakeBackend{mode: domain.ModeLocal}, "table")
+	model.width = 90
+	model.paletteOpen = true
+	model.paletteQuery = strings.Repeat("consulta muy larga ", 20)
+	palette := model.paletteView(8)
+	if width, height := lipgloss.Width(palette), lipgloss.Height(palette); width > 90 || height > 8 {
+		t.Fatalf("long palette rendered %dx%d:\n%s", width, height, palette)
+	}
+	model.paletteQuery = "título"
+	palette = model.paletteView(8)
+	if width := lipgloss.Width(palette); width > 90 {
+		t.Fatalf("disabled reason rendered %d columns:\n%s", width, palette)
 	}
 }

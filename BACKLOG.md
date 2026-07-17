@@ -21,7 +21,7 @@ Criterios de aceptación:
 - Un error no deja una tarea parcial.
 - La salida identifica origen e ID de la tarea creada y puede consumirse desde scripts.
 
-## B-002 — Paleta contextual de comandos en la TUI
+## B-002 — Paleta contextual de comandos en la TUI — Completada
 
 Ofrecer una entrada buscable para descubrir y ejecutar acciones sin memorizar todos los atajos.
 

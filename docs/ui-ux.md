@@ -12,6 +12,7 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 6. **Ayuda contextual completa.** El pie enumera todas las acciones disponibles en el contexto actual, agrupadas por navegación, tarea, relaciones, subtarea y filtros. Cambia al entrar en Papelera, Estados, historial, formularios, confirmaciones o selectores. `F1` conserva un mapa general opcional, pero ninguna operación debe exigir consultarlo. Cada formulario muestra formato, ejemplo y cómo confirmar o cancelar.
 7. **Lenguaje de usuario.** Meses, recurrencias, eventos de historial y errores de interacción se presentan en español. La sintaxis compacta queda como detalle documentado, no como punto de entrada principal.
 8. **Color como refuerzo.** Tabla, Calendario y Gantt comparten una paleta estable por estado: finalizadas en verde, canceladas en tono apagado y estados normales personalizados en colores diferenciados por nombre. El nombre, símbolo o leyenda permanece visible; ninguna distinción depende únicamente del color y el resaltado de selección tiene prioridad de contraste.
+9. **Paleta contextual.** `Ctrl+P` busca comandos por nombre, descripción y sinónimos. Ordena primero los válidos para la vista, selección y origen, explica los deshabilitados y ejecuta el mismo comando interno que el atajo mostrado.
 
 ## Mapa de interacción
 
@@ -34,6 +35,15 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 - `c`: elige primero el tipo de recurrencia; semanal usa selección múltiple de días y mensual por día de semana usa selectores consecutivos de ordinal y día. Solo el día numérico del mes requiere escribir un valor.
 
 Los selectores usan `↑`/`↓`, `Enter` y `Esc`. Una lista vacía lo indica explícitamente.
+
+### Paleta de comandos
+
+- `Ctrl+P` la abre desde cualquier vista local o global cuando no hay otra interacción transitoria activa.
+- Escribir filtra por nombre, descripción, sinónimos o atajo; `↑`/`↓` recorre resultados, `Enter` ejecuta y `Esc` cancela.
+- Los comandos válidos aparecen antes que los deshabilitados. Estos últimos permanecen buscables y muestran la restricción concreta.
+- Cada resultado muestra el atajo equivalente. La ejecución reinyecta ese atajo en el manejador raíz, por lo que no existe una segunda implementación de las reglas funcionales.
+- Cancelar solo cierra la paleta: conserva vista, tarea y subtarea seleccionadas, filtros, mes y desplazamiento del Gantt.
+- Formularios, selectores, confirmaciones, historial y ayuda tienen precedencia. Mientras uno esté abierto, `Ctrl+P` no lo reemplaza ni descarta su estado.
 
 ## Vistas y viewport
 
