@@ -99,6 +99,9 @@ func (fake) UpdateTitle(context.Context, string, int64, int64, string) (domain.T
 func (fake) MoveStatus(context.Context, string, int64, int64, int) (domain.Task, error) {
 	return domain.Task{}, nil
 }
+func (fake) SetStatus(context.Context, string, int64, int64, int64) (domain.Task, error) {
+	return domain.Task{}, nil
+}
 func (fake) SetLifecycle(context.Context, string, int64, int64, string) (domain.Task, error) {
 	return domain.Task{}, nil
 }
@@ -171,7 +174,9 @@ func (fake) DeleteStatus(context.Context, int64, *int64) error { return nil }
 func (fake) MarkdownEditor(context.Context, string, int64, int64) (tea.ExecCommand, func(error) error, error) {
 	return nil, nil, fmt.Errorf("editor deshabilitado en ui-preview")
 }
-func (fake) Trash(context.Context, string, int64, int64) ([]int64, error) { return nil, nil }
+func (fake) Trash(context.Context, string, int64, int64) (domain.Task, []int64, error) {
+	return domain.Task{}, nil, nil
+}
 func (fake) DependencyImpact(context.Context, string, int64) ([]domain.Task, error) {
 	return nil, nil
 }

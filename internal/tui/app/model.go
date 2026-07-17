@@ -38,6 +38,7 @@ type Backend interface {
 	FormStatuses(context.Context, string) ([]domain.Status, error)
 	UpdateTitle(context.Context, string, int64, int64, string) (domain.Task, error)
 	MoveStatus(context.Context, string, int64, int64, int) (domain.Task, error)
+	SetStatus(context.Context, string, int64, int64, int64) (domain.Task, error)
 	SetLifecycle(context.Context, string, int64, int64, string) (domain.Task, error)
 	CyclePriority(context.Context, string, int64, int64) (domain.Task, error)
 	UpdateDate(context.Context, string, int64, int64, string, *domain.Date) (domain.Task, error)
@@ -58,7 +59,7 @@ type Backend interface {
 	DeleteStatus(context.Context, int64, *int64) error
 	MarkdownEditor(context.Context, string, int64, int64) (tea.ExecCommand, func(error) error, error)
 	DependencyImpact(context.Context, string, int64) ([]domain.Task, error)
-	Trash(context.Context, string, int64, int64) ([]int64, error)
+	Trash(context.Context, string, int64, int64) (domain.Task, []int64, error)
 	Restore(context.Context, string, int64, int64) (domain.Task, error)
 }
 type loaded struct {
@@ -72,8 +73,12 @@ type created struct {
 	err  error
 }
 type mutated struct {
-	action string
-	err    error
+	action  string
+	err     error
+	warning bool
+	undo    *undoAction
+	source  string
+	id      int64
 }
 type markdownFinished struct{ err error }
 type detailLoaded struct {
@@ -152,11 +157,13 @@ type Model struct {
 	calendarMonth                 time.Time
 	ganttStartDay                 int
 	loading                       bool
+	loadedOnce                    bool
 	err                           error
 	inputMode                     bool
 	inputAction                   string
 	input                         string
 	notice                        string
+	noticeKind                    feedbackKind
 	filter                        ports.TaskFilter
 	priorityFilter                int
 	statusNameFilter              string
@@ -182,6 +189,12 @@ type Model struct {
 	history                       []domain.HistoryEvent
 	form                          taskForm
 	nextFormRequestID             uint64
+	undo                          *undoAction
+	undoPending                   bool
+	undoRequestID                 uint64
+	conflict                      *conflictState
+	nextConflictRequestID         uint64
+	refreshErr                    error
 }
 
 func New(b Backend) Model {
@@ -248,16 +261,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = v.Width, v.Height
 	case loaded:
 		m.loading = false
-		m.err = v.err
-		if v.err != nil && (len(v.tasks) > 0 || m.backend.Mode() == domain.ModeGlobal) {
-			m.notice = "Algunos orígenes no están disponibles: " + v.err.Error()
+		hadLoaded := m.loadedOnce
+		if v.err == nil {
 			m.err = nil
-		}
-		if v.trash {
-			m.deleted = presenter.Tasks(v.tasks)
+			m.refreshErr = nil
+		} else if hadLoaded {
+			m.err = nil
+			m.refreshErr = v.err
 		} else {
-			m.tasks = presenter.Tasks(v.tasks)
-			m.statuses = v.statuses
+			m.err = v.err
+		}
+		if v.err == nil || len(v.tasks) > 0 {
+			m.loadedOnce = true
+		}
+		if v.err != nil && !hadLoaded && (len(v.tasks) > 0 || m.backend.Mode() == domain.ModeGlobal) {
+			m.notice = "Algunos orígenes no están disponibles: " + v.err.Error()
+			m.noticeKind = feedbackWarning
+			m.err = nil
+			m.refreshErr = nil
+		}
+		if v.err == nil || len(v.tasks) > 0 || !hadLoaded {
+			if v.trash {
+				m.deleted = presenter.Tasks(v.tasks)
+			} else {
+				m.tasks = presenter.Tasks(v.tasks)
+				m.statuses = v.statuses
+			}
 		}
 		if m.preserveSelectionID != 0 {
 			items := m.tasks
@@ -343,6 +372,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.form.saving = false
 		if v.err != nil {
+			if errors.Is(v.err, domain.ErrConflict) {
+				m.form.conflict = true
+				m.form.errors["form"] = "conflicto: la tarea cambió en otra sesión"
+				break
+			}
 			var validation domain.ValidationError
 			if errors.As(v.err, &validation) {
 				m.form.errors[validation.Field] = localizedValidation(validation.Field, validation.Message)
@@ -352,13 +386,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.form = taskForm{}
+		m.undo = nil
 		m.notice = "Tarea actualizada"
 		if v.created {
 			m.notice = "Tarea creada"
 		}
 		m.preserveSelectionID = v.task.ID
 		m.preserveSelectionSource = v.task.Origin.Key
+		m.loading = true
 		return m, m.load(false)
+	case formConflictReviewed:
+		if !m.form.open || !m.form.conflict || m.form.requestID != v.requestID {
+			break
+		}
+		m.form.conflictLoading = false
+		if v.err != nil {
+			m.form.errors["form"] = "no se pudo cargar la versión remota: " + friendlyError(v.err)
+		} else {
+			m.form.remote = &v.task
+			if m.form.keepAfterReview {
+				m.form.rebaseOntoRemote()
+			}
+		}
 	case detailLoaded:
 		if v.err != nil {
 			m.err = v.err
@@ -396,23 +445,92 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = v.err
 		if v.err == nil {
 			m.inputMode = false
+			m.undo = nil
 			m.notice = "Tarea creada"
 			m.preserveSelectionID = v.task.ID
 			m.preserveSelectionSource = v.task.Origin.Key
+			m.loading = true
 			return m, m.load(false)
 		}
 	case mutated:
-		m.inputMode = false
 		m.loading = false
 		m.err = v.err
 		if v.err == nil {
+			m.inputMode = false
 			m.notice = v.action
+			m.noticeKind = feedbackSuccess
+			if v.warning {
+				m.noticeKind = feedbackWarning
+			}
+			m.undo = v.undo
+			m.conflict = nil
 			m.rememberSelection()
+			m.loading = true
 			return m, m.load(m.view == 4)
+		}
+		if errors.Is(v.err, domain.ErrConflict) {
+			if v.id != 0 {
+				m.setConflict(v.source, v.id, "")
+			} else if m.hasSelectedTask() {
+				task := m.tasks[m.selected]
+				m.setConflict(task.Source, task.ID, task.Title)
+			}
+		}
+	case undoFinished:
+		if !m.undoPending || v.requestID != m.undoRequestID {
+			break
+		}
+		m.undoPending = false
+		m.loading = false
+		m.err = v.err
+		if v.err == nil {
+			m.undo = nil
+			m.conflict = nil
+			if v.action.kind == undoTrash {
+				m.notice = "Tarea restaurada; las dependencias eliminadas al enviarla a papelera no se recuperan"
+				m.noticeKind = feedbackWarning
+			} else {
+				m.notice = "Cambio de estado deshecho"
+				m.noticeKind = feedbackSuccess
+			}
+			m.preserveSelectionID = v.task.ID
+			m.preserveSelectionSource = v.task.Origin.Key
+			m.loading = true
+			return m, m.load(m.view == 4)
+		}
+		if errors.Is(v.err, domain.ErrConflict) {
+			m.setConflict(v.action.source, v.action.id, v.action.title)
+		}
+	case conflictReviewed:
+		if m.conflict == nil || v.conflict.requestID != m.conflict.requestID {
+			break
+		}
+		m.loading = false
+		m.err = v.err
+		if v.err == nil {
+			shown := false
+			for index, task := range m.tasks {
+				if task.ID == v.task.ID && task.Source == v.task.Origin.Key {
+					m.selected = index
+					m.detail = &v.task
+					m.panelFocus = focusInspector
+					m.inspectorMode = inspectorExpanded
+					shown = true
+					break
+				}
+			}
+			if shown {
+				m.notice = "Se cargó la versión remota para revisarla en el Inspector"
+			} else {
+				m.notice = fmt.Sprintf("Versión remota #%d v%d: %s", v.task.ID, v.task.Version, v.task.Title)
+			}
+			m.noticeKind = feedbackWarning
+			m.conflict = nil
 		}
 	case markdownFinished:
 		m.err = v.err
 		if v.err == nil {
+			m.undo = nil
 			m.notice = "Markdown actualizado"
 			return m, m.load(false)
 		}
@@ -424,6 +542,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.form.open {
 			return m.updateTaskForm(v)
 		}
+		if m.conflict != nil {
+			conflict := *m.conflict
+			switch v.String() {
+			case "r":
+				m.conflict = nil
+				m.err = nil
+				m.loading = true
+				return m, m.load(m.view == 4)
+			case "v":
+				m.loading = true
+				return m, m.reviewConflictCommand(conflict)
+			case "esc":
+				m.conflict = nil
+				m.err = nil
+				m.loading = false
+				return m, nil
+			}
+		}
+		m.clearTransientFeedback()
 		if m.paletteOpen {
 			return m.updatePalette(v)
 		}
@@ -490,6 +627,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			m.cancelDayWatch()
 			return m, tea.Quit
+		case "U":
+			if m.undo != nil && !m.undoPending {
+				action := *m.undo
+				m.undoRequestID++
+				requestID := m.undoRequestID
+				m.undoPending = true
+				m.loading = true
+				return m, m.undoCommand(requestID, action)
+			}
 		case "tab", "shift+tab":
 			if m.hasSelectedTask() {
 				if m.inspectorMode == inspectorHidden {
@@ -650,8 +796,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					_, e := m.backend.SetLifecycle(ctx, task.Source, task.ID, task.Version, action)
-					return mutated{action: notice, err: e}
+					updated, e := m.backend.SetLifecycle(ctx, task.Source, task.ID, task.Version, action)
+					var undo *undoAction
+					if e == nil {
+						undo = &undoAction{kind: undoStatus, source: task.Source, title: task.Title, id: task.ID, version: updated.Version, previousStatusID: task.StatusID}
+					}
+					return mutated{action: notice, err: e, undo: undo, source: task.Source, id: task.ID}
 				}
 			}
 		case "F":
@@ -842,8 +992,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					_, e := m.backend.MoveStatus(ctx, t.Source, t.ID, t.Version, direction)
-					return mutated{action: "Estado actualizado", err: e}
+					updated, e := m.backend.MoveStatus(ctx, t.Source, t.ID, t.Version, direction)
+					if e == nil && updated.Version == t.Version {
+						return mutated{action: "La tarea ya está en el límite del flujo", warning: true, source: t.Source, id: t.ID}
+					}
+					var undo *undoAction
+					if e == nil {
+						undo = &undoAction{kind: undoStatus, source: t.Source, title: t.Title, id: t.ID, version: updated.Version, previousStatusID: t.StatusID}
+					}
+					return mutated{action: "Estado actualizado", err: e, undo: undo, source: t.Source, id: t.ID}
 				}
 			}
 		case "m":
@@ -888,7 +1045,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					_, e := m.backend.Restore(ctx, t.Source, t.ID, t.Version)
-					return mutated{action: "Tarea restaurada", err: e}
+					return mutated{action: "Tarea restaurada", err: e, source: t.Source, id: t.ID}
 				}
 			}
 		case "i":
@@ -948,8 +1105,12 @@ func (m Model) trash(task presenter.Task) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, e := m.backend.Trash(ctx, task.Source, task.ID, task.Version)
-		return mutated{action: "Tarea enviada a la papelera", err: e}
+		trashed, _, e := m.backend.Trash(ctx, task.Source, task.ID, task.Version)
+		var undo *undoAction
+		if e == nil {
+			undo = &undoAction{kind: undoTrash, source: task.Source, title: task.Title, id: task.ID, version: trashed.Version}
+		}
+		return mutated{action: "Tarea enviada a la papelera", err: e, undo: undo, source: task.Source, id: task.ID}
 	}
 }
 func (m Model) reloadFiltered(notice string) (tea.Model, tea.Cmd) {
@@ -1145,8 +1306,8 @@ func (m Model) pickerView(height int) string {
 		title = "Elegir día de la semana"
 	}
 	lines := []string{theme.Title.Render(title)}
-	if m.notice != "" {
-		lines = append(lines, theme.Help.Foreground(theme.Danger).Render(m.notice))
+	if feedback := m.feedbackLine(); feedback != "" {
+		lines = append(lines, feedback)
 	}
 	if len(m.pickerOptions) == 0 {
 		lines = append(lines, "No hay opciones disponibles.")
@@ -1652,9 +1813,9 @@ func (m Model) View() string {
 	var body string
 	if m.form.open {
 		body = m.form.view(m.width, availableHeight)
-	} else if m.loading {
+	} else if m.loading && !m.loadedOnce {
 		body = "Cargando…"
-	} else if m.err != nil {
+	} else if m.err != nil && !m.loadedOnce {
 		message := "Error: " + friendlyError(m.err)
 		if errors.Is(m.err, domain.ErrConflict) {
 			message = "Conflicto: la tarea cambió en otra sesión. Pulsa r para refrescar antes de reintentar."
@@ -1713,6 +1874,9 @@ func (m Model) View() string {
 			body = historyscreen.View(m.history, availableHeight)
 		}
 	}
+	if m.loading && m.loadedOnce {
+		header += "  " + theme.Help.Render("⟳ Actualizando…")
+	}
 	if m.paletteOpen {
 		body = m.paletteView(availableHeight)
 	} else if m.helpOpen {
@@ -1738,6 +1902,16 @@ func (m Model) footerContent() string {
 	if m.form.open {
 		if m.form.loadFailed {
 			return "FORMULARIO No se pudieron cargar datos seguros para guardar · Esc cerrar"
+		}
+		if m.form.conflict {
+			if m.form.confirmRemoteReload {
+				return "CONFIRMAR  La recarga descartará el borrador local · y/Enter recargar · n/Esc conservar"
+			}
+			keys := "CONFLICTO  r recargar remoto · k conservar borrador local · Esc seguir editando"
+			if m.form.task.ID != 0 {
+				keys = "CONFLICTO  r recargar remoto · v revisar cambio · k conservar borrador local · Esc seguir editando"
+			}
+			return keys
 		}
 		if m.form.confirmDiscard {
 			return "CONFIRMAR  y/Enter descartar cambios · n/Esc continuar editando"
@@ -1771,7 +1945,11 @@ func (m Model) footerContent() string {
 		return fmt.Sprintf("CONFIRMAR  Se eliminarán dependencias con %s\ny/Enter confirmar · n/Esc cancelar · F1 ayuda general", strings.Join(labels, ", "))
 	}
 	if m.inputMode {
-		return fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
+		footer := fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
+		if feedback := m.feedbackLine(); feedback != "" {
+			footer = feedback + "\n" + footer
+		}
+		return footer
 	}
 
 	contextCapabilities := m.backend.Capabilities("")
@@ -1800,9 +1978,10 @@ func (m Model) footerContent() string {
 	if m.view == 5 && m.selected >= 0 && m.selected < len(m.statuses) {
 		context.NormalStatus = m.statuses[m.selected].Kind == domain.StatusNormal
 	}
+	context.HasUndo = m.undo != nil && !m.undoPending
 	footer := keymap.Footer(context)
-	if m.notice != "" {
-		footer = "AVISO      " + m.notice + "\n" + footer
+	if feedback := m.feedbackLine(); feedback != "" {
+		footer = feedback + "\n" + footer
 	}
 	return footer
 }

@@ -20,9 +20,19 @@ type fakeBackend struct {
 	tasks              []domain.Task
 	deleted            []domain.Task
 	trashCalls         int
+	trashErr           error
 	restoreCalls       int
+	restoreErr         error
+	lastRestoreVersion int64
 	updateCalls        int
 	moveCalls          int
+	moveErr            error
+	moveNoop           bool
+	lifecycleErr       error
+	setStatusCalls     int
+	setStatusErr       error
+	lastSetStatus      int64
+	lastSetVersion     int64
 	priorityCalls      int
 	dateCalls          int
 	addSubCalls        int
@@ -115,13 +125,21 @@ func (b *fakeBackend) UpdateTitle(context.Context, string, int64, int64, string)
 	b.updateCalls++
 	return domain.Task{}, nil
 }
-func (b *fakeBackend) MoveStatus(context.Context, string, int64, int64, int) (domain.Task, error) {
+func (b *fakeBackend) MoveStatus(_ context.Context, source string, id, version int64, _ int) (domain.Task, error) {
 	b.moveCalls++
-	return domain.Task{}, nil
+	if b.moveNoop {
+		return domain.Task{ID: id, Version: version, Origin: domain.TaskOrigin{Key: source}}, b.moveErr
+	}
+	return domain.Task{ID: id, Version: version + 1, Origin: domain.TaskOrigin{Key: source}}, b.moveErr
 }
-func (b *fakeBackend) SetLifecycle(context.Context, string, int64, int64, string) (domain.Task, error) {
+func (b *fakeBackend) SetStatus(_ context.Context, source string, id, status, version int64) (domain.Task, error) {
+	b.setStatusCalls++
+	b.lastSetStatus, b.lastSetVersion = status, version
+	return domain.Task{ID: id, StatusID: status, Version: version + 1, Origin: domain.TaskOrigin{Key: source}}, b.setStatusErr
+}
+func (b *fakeBackend) SetLifecycle(_ context.Context, source string, id, version int64, _ string) (domain.Task, error) {
 	b.moveCalls++
-	return domain.Task{}, nil
+	return domain.Task{ID: id, Version: version + 1, Origin: domain.TaskOrigin{Key: source}}, b.lifecycleErr
 }
 func (b *fakeBackend) CyclePriority(context.Context, string, int64, int64) (domain.Task, error) {
 	b.priorityCalls++
@@ -213,9 +231,9 @@ func (b *fakeBackend) DeleteStatus(context.Context, int64, *int64) error {
 func (b *fakeBackend) MarkdownEditor(context.Context, string, int64, int64) (tea.ExecCommand, func(error) error, error) {
 	return nil, nil, domain.ErrNotFound
 }
-func (b *fakeBackend) Trash(context.Context, string, int64, int64) ([]int64, error) {
+func (b *fakeBackend) Trash(_ context.Context, source string, id, version int64) (domain.Task, []int64, error) {
 	b.trashCalls++
-	return nil, nil
+	return domain.Task{ID: id, Version: version + 1, Origin: domain.TaskOrigin{Key: source}}, nil, b.trashErr
 }
 func (b *fakeBackend) DependencyImpact(context.Context, string, int64) ([]domain.Task, error) {
 	result := make([]domain.Task, 0, len(b.impact))
@@ -224,9 +242,10 @@ func (b *fakeBackend) DependencyImpact(context.Context, string, int64) ([]domain
 	}
 	return result, nil
 }
-func (b *fakeBackend) Restore(context.Context, string, int64, int64) (domain.Task, error) {
+func (b *fakeBackend) Restore(_ context.Context, source string, id, version int64) (domain.Task, error) {
 	b.restoreCalls++
-	return domain.Task{}, nil
+	b.lastRestoreVersion = version
+	return domain.Task{ID: id, Version: version + 1, Origin: domain.TaskOrigin{Key: source}}, b.restoreErr
 }
 
 func key(value string) tea.KeyMsg {
@@ -714,7 +733,7 @@ func TestContextualFooterChangesForTransientModesAndKeepsNotices(t *testing.T) {
 
 	model.notice = "Operación terminada"
 	view := model.View()
-	for _, expected := range []string{"AVISO", "Operación terminada", "ACCIONES", "n nueva tarea"} {
+	for _, expected := range []string{"✓ ÉXITO", "Operación terminada", "ACCIONES", "n nueva tarea"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("notice replaced contextual help; missing %q:\n%s", expected, view)
 		}

@@ -130,17 +130,19 @@ func (f textField) view(active bool) string {
 }
 
 type taskForm struct {
-	open, loading, loadFailed, editing, compact, saving, confirmDiscard bool
-	requestID                                                           uint64
-	field                                                               int
-	source, destination                                                 string
-	task                                                                domain.Task
-	statuses                                                            []domain.Status
-	statusIndex                                                         int
-	priority                                                            domain.Priority
-	text                                                                map[int]textField
-	errors                                                              map[string]string
-	original                                                            string
+	open, loading, loadFailed, editing, compact, saving, confirmDiscard, conflict, conflictLoading bool
+	confirmRemoteReload, keepAfterReview                                                           bool
+	requestID                                                                                      uint64
+	field                                                                                          int
+	source, destination                                                                            string
+	task                                                                                           domain.Task
+	statuses                                                                                       []domain.Status
+	statusIndex                                                                                    int
+	priority                                                                                       domain.Priority
+	text                                                                                           map[int]textField
+	errors                                                                                         map[string]string
+	original                                                                                       string
+	remote                                                                                         *domain.Task
 }
 
 type formLoaded struct {
@@ -159,6 +161,12 @@ type formSaved struct {
 	task    domain.Task
 	created bool
 	err     error
+}
+
+type formConflictReviewed struct {
+	requestID uint64
+	task      domain.Task
+	err       error
 }
 
 func newTaskForm(message formLoaded) taskForm {
@@ -357,6 +365,60 @@ func (m Model) updateTaskForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.form.conflict {
+		if m.form.confirmRemoteReload {
+			switch key.String() {
+			case "y", "Y", "enter":
+				m.form = taskForm{}
+				m.loading = true
+				return m, m.load(m.view == 4)
+			case "n", "N", "esc":
+				m.form.confirmRemoteReload = false
+			}
+			return m, nil
+		}
+		switch key.String() {
+		case "r":
+			m.form.confirmRemoteReload = true
+			return m, nil
+		case "v":
+			if m.form.task.ID == 0 || m.form.conflictLoading {
+				return m, nil
+			}
+			requestID, source, id := m.form.requestID, m.form.source, m.form.task.ID
+			m.form.conflictLoading = true
+			return m, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				task, err := m.backend.Detail(ctx, source, id)
+				return formConflictReviewed{requestID: requestID, task: task, err: err}
+			}
+		case "k", "K", "esc":
+			if key.String() == "esc" {
+				m.form.conflict = false
+				m.form.remote = nil
+				delete(m.form.errors, "form")
+				return m, nil
+			}
+			if m.form.remote != nil {
+				m.form.rebaseOntoRemote()
+				return m, nil
+			}
+			if !m.form.conflictLoading {
+				requestID, source, id := m.form.requestID, m.form.source, m.form.task.ID
+				m.form.conflictLoading = true
+				m.form.keepAfterReview = true
+				return m, func() tea.Msg {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					task, err := m.backend.Detail(ctx, source, id)
+					return formConflictReviewed{requestID: requestID, task: task, err: err}
+				}
+			}
+			return m, nil
+		}
+		return m, nil
+	}
 	if m.form.confirmDiscard {
 		switch key.String() {
 		case "y", "Y", "enter":
@@ -423,6 +485,18 @@ func (m Model) updateTaskForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (f *taskForm) rebaseOntoRemote() {
+	if f.remote == nil {
+		return
+	}
+	f.task = *f.remote
+	f.remote = nil
+	f.conflict = false
+	f.conflictLoading = false
+	f.keepAfterReview = false
+	delete(f.errors, "form")
+}
+
 func (f taskForm) view(width, height int) string {
 	if f.loading {
 		return theme.Border.Width(max(30, width-4)).Render(theme.Title.Render("Formulario de tarea") + "\n\nCargando datos y estados…")
@@ -476,6 +550,10 @@ func (f taskForm) view(width, height int) string {
 	}
 	if f.confirmDiscard {
 		lines = append(lines, "", theme.Help.Foreground(theme.Danger).Render("¿Descartar cambios sin guardar? y/Enter sí · n/Esc no"))
+	}
+	if f.remote != nil {
+		lines = append(lines, "", theme.Help.Foreground(theme.Warning).Render(fmt.Sprintf("⚠ REMOTO v%d · %s · estado #%d · prioridad %s", f.remote.Version, f.remote.Title, f.remote.StatusID, f.remote.Priority.String())))
+		lines = append(lines, theme.Help.Render("El borrador local permanece arriba sin modificar."))
 	}
 	content := strings.Join(lines, "\n")
 	return theme.Border.Width(max(30, width-4)).Height(max(10, min(height-2, len(lines)+1))).Render(content)

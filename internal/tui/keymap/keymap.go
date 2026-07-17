@@ -21,12 +21,16 @@ type Context struct {
 	InspectorFocused    bool
 	InspectorExpanded   bool
 	InspectorPinned     bool
+	HasUndo             bool
 }
 
 // Footer returns one logical group per line. The app wraps these lines to the
 // terminal width and reserves their rendered height before drawing the body.
 func Footer(context Context) string {
 	lines := []string{"ACCIONES"}
+	if context.HasUndo {
+		lines = append(lines, "Deshacer   U revertir el último cambio compatible")
+	}
 	switch context.View {
 	case 4:
 		lines = append(lines, "Navegar    ←/→ cambiar vista · ↑/↓ seleccionar · r recargar · q salir")
@@ -149,7 +153,7 @@ func Full(global bool) string {
 		"  X alternar canceladas      o ordenar      0 limpiar filtros",
 		"",
 		"Otras acciones",
-		"  c recurrencia     u restaurar     r recargar     ,/. desplazar Gantt",
+		"  U deshacer        c recurrencia     u restaurar     r recargar     ,/. desplazar Gantt",
 		"  Estados: a crear, e renombrar, i inicial, [/] ordenar, d eliminar",
 		"  Ctrl+P abrir paleta contextual de comandos",
 	}

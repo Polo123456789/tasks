@@ -15,6 +15,7 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 9. **Paleta contextual.** `Ctrl+P` busca comandos por nombre, descripción y sinónimos. Ordena primero los válidos para la vista, selección y origen, explica los deshabilitados y ejecuta el mismo comando interno que el atajo mostrado.
 10. **Foco de panel explícito.** Vista e Inspector tienen borde y título de foco. `Tab`/`Shift+Tab` cambia de panel y `↑`/`↓` recorre únicamente el panel activo, de modo que una acción anidada nunca usa una selección invisible.
 11. **Formulario único y transaccional.** `n` crea y `e` edita mediante el mismo formulario de título, estado, prioridad, fechas y recurrencia. `N` conserva una captura compacta solo con título. La validación permanece junto al campo y el backend recibe una sola mutación optimista con todos los valores.
+12. **Feedback no bloqueante.** Una carga posterior a la inicial no sustituye el cuerpo. La cabecera indica `⟳ Actualizando…` y cada resultado combina símbolo, palabra y color: `✓ ÉXITO`, `⚠ ADVERTENCIA` o `✗ ERROR`.
 
 ## Mapa de interacción
 
@@ -45,6 +46,14 @@ Los selectores usan `↑`/`↓`, `Enter` y `Esc`. Una lista vacía lo indica exp
 - `Enter`/`Ctrl+S` valida y guarda el conjunto completo. Errores de título, fecha o recurrencia aparecen debajo del campo sin cerrar ni reemplazar el formulario.
 - El borrador sobrevive a validaciones y errores recuperables. `Esc` cierra directamente un formulario intacto y solicita confirmación solo cuando su firma difiere de los valores iniciales.
 - Crear, editar o cancelar no modifica la selección, el viewport ni el foco previo. El formulario identifica el proyecto u origen global que recibirá la escritura antes de confirmarla.
+- En conflicto, `v` carga una comparación remota sin reemplazar el borrador; `k` conserva el texto local y actualiza su versión base con una lectura remota, y `r` solicita confirmación explícita antes de descartarlo para recargar. La elección se presenta antes de aceptar más edición.
+
+## Feedback, conflictos y deshacer
+
+- El primer arranque puede mostrar `Cargando…`; recargas, filtros y mutaciones posteriores conservan el último contenido válido. Un fallo de recarga tampoco vacía esa vista.
+- Éxitos, advertencias y errores ocupan una línea sobre el mapa contextual. Desaparecen con la siguiente interacción relevante, mientras la acción de deshacer permanece disponible hasta que otra mutación la reemplace o su versión deje de coincidir.
+- `U` deshace cambios de columna, finalización, cancelación, reapertura y envío a papelera. La entrada guarda origen, ID, estado anterior y la versión resultante devuelta por el backend; este exige esa versión al revertir. El undo de papelera restaura la tarea, no las relaciones eliminadas, y se confirma como advertencia explícita.
+- Un conflicto optimista nunca se fuerza. `r` recarga y `v` inspecciona la versión remota; dentro del formulario también se puede conservar el borrador local. Texto y símbolos hacen que ningún estado dependa solo del color.
 
 ### Paleta de comandos
 

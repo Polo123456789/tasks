@@ -12,6 +12,7 @@ var (
 	Primary  = lipgloss.Color("#7D56F4")
 	Muted    = lipgloss.Color("#6C7086")
 	Danger   = lipgloss.Color("#F38BA8")
+	Warning  = lipgloss.Color("#F9E2AF")
 	Success  = lipgloss.Color("#A6E3A1")
 	Title    = lipgloss.NewStyle().Bold(true).Foreground(Primary)
 	Border   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Muted).Padding(0, 1)

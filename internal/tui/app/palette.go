@@ -38,6 +38,7 @@ const (
 	paletteNormalStatus
 	paletteNormalStatusLeft
 	paletteNormalStatusRight
+	paletteUndo
 )
 
 type paletteAction struct {
@@ -68,6 +69,7 @@ var paletteCatalog = []paletteAction{
 	{Name: "Gantt siete días atrás", Description: "Desplazar la ventana temporal hacia atrás", Synonyms: "cronograma fecha izquierda", Shortcut: ",", Key: ",", Requirement: paletteGanttView},
 	{Name: "Gantt siete días adelante", Description: "Desplazar la ventana temporal hacia adelante", Synonyms: "cronograma fecha derecha", Shortcut: ".", Key: ".", Requirement: paletteGanttView},
 	{Name: "Recargar", Description: "Volver a leer las tareas del almacenamiento", Synonyms: "refrescar actualizar sincronizar", Shortcut: "r", Key: "r", Requirement: paletteAlways},
+	{Name: "Deshacer último cambio", Description: "Revertir estado, ciclo o papelera si la versión aún coincide", Synonyms: "undo restaurar revertir", Shortcut: "U", Key: "U", Requirement: paletteUndo},
 	{Name: "Nueva tarea", Description: "Abrir el formulario completo en el origen escribible", Synonyms: "añadir agregar formulario", Shortcut: "n", Key: "n", Requirement: paletteCreateTask},
 	{Name: "Captura compacta", Description: "Crear inmediatamente una tarea solo con su nombre", Synonyms: "rápida quick capturar", Shortcut: "N", Key: "N", Requirement: paletteCreateTask},
 	{Name: "Editar título", Description: "Modificar el título y todos los atributos principales", Synonyms: "renombrar cambiar nombre estado prioridad fechas recurrencia", Shortcut: "e", Key: "e", Requirement: paletteTask},
@@ -180,6 +182,14 @@ func (m Model) paletteAvailability(requirement paletteRequirement) (bool, string
 	switch requirement {
 	case paletteAlways:
 		return true, ""
+	case paletteUndo:
+		if m.undo != nil && !m.undoPending {
+			return true, ""
+		}
+		if m.undoPending {
+			return false, "ya se está deshaciendo el cambio"
+		}
+		return false, "no hay un cambio compatible para deshacer"
 	case paletteSelectNext:
 		if m.canMoveSelection(1) {
 			return true, ""

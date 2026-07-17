@@ -661,19 +661,25 @@ func (s *Service) DependencyCandidates(ctx context.Context, path string, taskID 
 	}
 	return out, nil
 }
-func (s *Service) TrashTask(ctx context.Context, path string, id, version int64) ([]int64, error) {
+func (s *Service) TrashTask(ctx context.Context, path string, id, version int64) (domain.Task, []int64, error) {
 	p, e := s.source(path)
 	if e != nil {
-		return nil, e
+		return domain.Task{}, nil, e
 	}
 	if s.Clock == nil {
-		return nil, domain.ValidationError{Field: "trash", Message: "clock is required"}
+		return domain.Task{}, nil, domain.ValidationError{Field: "trash", Message: "clock is required"}
 	}
 	v, _ := s.locks.LoadOrStore(path, &sync.Mutex{})
 	m := v.(*sync.Mutex)
 	m.Lock()
 	defer m.Unlock()
-	return p.Store.TrashTask(ctx, id, version, s.Clock.Today())
+	affected, e := p.Store.TrashTask(ctx, id, version, s.Clock.Today())
+	if e != nil {
+		return domain.Task{}, nil, e
+	}
+	task, e := p.Store.Task(ctx, id)
+	task.Origin = p.Origin
+	return task, affected, e
 }
 func (s *Service) DependencyImpact(ctx context.Context, path string, id int64) ([]int64, error) {
 	p, e := s.source(path)

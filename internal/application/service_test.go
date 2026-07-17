@@ -341,6 +341,56 @@ func TestSetTaskLifecycleJumpsDirectlyToSpecialAndInitialStatuses(t *testing.T) 
 	}
 }
 
+func TestUndoStatusWithStaleResultVersionNeverOverwritesExternalChange(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "undo.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task, err := store.CreateTask(context.Background(), domain.Task{Title: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialStatus := task.StatusID
+	service := Service{Mode: domain.ModeLocal, Sources: []Source{testSource(domain.OriginProject, "project.tasks", "project", store)}, WritableSource: "project.tasks"}
+	completed, err := service.SetTaskLifecycle(context.Background(), "", task.ID, task.Version, "complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := service.SetTaskLifecycle(context.Background(), "", completed.ID, completed.Version, "cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.SetStatus(context.Background(), "", completed.ID, initialStatus, completed.Version); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale undo error=%v", err)
+	}
+	current, err := service.Task(context.Background(), "", task.ID)
+	if err != nil || current.StatusID != external.StatusID || current.Version != external.Version {
+		t.Fatalf("external change overwritten: current=%#v external=%#v err=%v", current, external, err)
+	}
+}
+
+func TestTrashReturnsExactVersionRequiredForUndo(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "trash-undo.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task, err := store.CreateTask(context.Background(), domain.Task{Title: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	today, _ := domain.ParseDate("2026-07-16")
+	service := Service{Mode: domain.ModeLocal, Clock: fixedClock{today}, Sources: []Source{testSource(domain.OriginProject, "project.tasks", "project", store)}, WritableSource: "project.tasks"}
+	trashed, _, err := service.TrashTask(context.Background(), "", task.ID, task.Version)
+	if err != nil || trashed.DeletedAt == nil || trashed.Version != task.Version+1 || trashed.Origin.Key != "project.tasks" {
+		t.Fatalf("trashed=%#v err=%v", trashed, err)
+	}
+	if _, err = service.RestoreTask(context.Background(), "", trashed.ID, trashed.Version); err != nil {
+		t.Fatalf("exact undo version was rejected: %v", err)
+	}
+}
+
 func TestDependencyCandidatesIgnoreViewFiltersAndNameExistingChoices(t *testing.T) {
 	store, err := db.Open(filepath.Join(t.TempDir(), "dependencies.tasks"))
 	if err != nil {

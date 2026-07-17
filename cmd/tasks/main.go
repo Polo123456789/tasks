@@ -80,6 +80,12 @@ func (b backend) MoveStatus(c context.Context, path string, id, version int64, d
 	}
 	return b.svc.MoveTaskStatus(c, path, id, version, direction)
 }
+func (b backend) SetStatus(c context.Context, path string, id, status, version int64) (domain.Task, error) {
+	if path == "" {
+		path = b.path
+	}
+	return b.svc.SetStatus(c, path, id, status, version)
+}
 func (b backend) SetLifecycle(c context.Context, path string, id, version int64, action string) (domain.Task, error) {
 	if path == "" {
 		path = b.path
@@ -207,7 +213,7 @@ func (b backend) MarkdownEditor(c context.Context, path string, id, version int6
 	}
 	return session, finish, nil
 }
-func (b backend) Trash(c context.Context, path string, id, version int64) ([]int64, error) {
+func (b backend) Trash(c context.Context, path string, id, version int64) (domain.Task, []int64, error) {
 	if path == "" {
 		path = b.path
 	}

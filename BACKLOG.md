@@ -104,7 +104,7 @@ Criterios de aceptación:
 - Fechas y recurrencia incompatibles se explican antes de enviar la mutación.
 - Crear, editar y cancelar preservan correctamente selección y viewport.
 
-## B-006 — Feedback no bloqueante, recuperación y deshacer
+## B-006 — Feedback no bloqueante, recuperación y deshacer — Completada
 
 Mantener visible el contexto mientras la aplicación carga, valida o informa el resultado de una operación.
 

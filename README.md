@@ -201,6 +201,8 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 - El inspector permite recorrer campos, subtareas, dependencias e historial. `Enter` ejecuta la acción natural de la fila; `I` alterna disposición normal, expandida y oculta, y `Espacio` fija o libera la disposición al cambiar de vista.
 - `n`: abrir el formulario completo de una tarea; `e`: reutilizarlo con la tarea seleccionada; `N`: captura compacta inmediata de solo título. El formulario recorre título, estado, prioridad, inicio, vencimiento y recurrencia con `Tab`/`Shift+Tab`, y muestra el destino/origen antes de guardar.
 - En campos de texto, `←`/`→` mueve el cursor, `Ctrl+←`/`Ctrl+→` salta por palabras, `Ctrl+W` borra la palabra anterior y `Ctrl+U`/`Ctrl+K` borra hasta el inicio/final. El pegado preserva el borrador. `Enter` o `Ctrl+S` guarda todos los campos como una sola operación; `Esc` solo pide confirmación si hubo cambios.
+- Las recargas y mutaciones conservan el contenido actual y muestran `⟳ Actualizando…` en la cabecera. Los resultados se distinguen también por `✓ ÉXITO`, `⚠ ADVERTENCIA` o `✗ ERROR`, nunca solo por color, y desaparecen en la siguiente interacción relevante.
+- `U` deshace el último cambio compatible de estado, finalización, cancelación o papelera. El deshacer usa exactamente la versión producida por el cambio; si otra sesión ya modificó el elemento, se rechaza y ofrece recargar o revisar en vez de sobrescribir. En papelera restaura la tarea, pero las relaciones que la eliminación quitó explícitamente no se reconstruyen y la advertencia lo indica.
 - `PgUp` / `PgDn`: periodo anterior/siguiente en Calendario y Gantt.
 - `,` / `.`: desplazar la ventana de días del Gantt cuando el mes no cabe completo.
 - `n`, `e`, `p`, `s`, `v`: crear, editar título, prioridad, inicio y vencimiento.
@@ -220,6 +222,8 @@ Las operaciones que relacionan elementos no requieren memorizar IDs: dependencia
 En modo global, `n` y `N` crean siempre en el origen propio, que aparece explícitamente en el formulario completo. Las acciones de creación anidada aparecen para tareas globales y muestran una explicación cuando la tarea pertenece a un proyecto registrado. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
 
 La paleta muestra primero los comandos disponibles para la vista, selección y origen actuales. Los demás resultados explican por qué no están disponibles y conservan visible su atajo. Ejecutar desde la paleta recorre exactamente el mismo manejador que pulsar ese atajo; al cancelar no cambian la selección, los filtros ni el periodo visible. Los formularios, selectores, confirmaciones, historial y ayuda ya abiertos tienen precedencia sobre `Ctrl+P`.
+
+Ante un conflicto del formulario, `r` pide confirmación antes de descartar el borrador y recargar, `v` muestra la versión remota para compararla y `k` conserva el texto local rebasándolo sobre la versión remota recién leída. Los conflictos fuera del formulario mantienen la vista visible y ofrecen recargar o revisar la versión remota en el Inspector.
 
 La terminal mínima soportada es de 90 columnas por 40 filas (`90x40`). El cuerpo reserva dinámicamente el espacio ocupado por el pie contextual multilínea.
 
