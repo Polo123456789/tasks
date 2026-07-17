@@ -8,12 +8,15 @@ import (
 type Task struct {
 	ID                                             int64
 	Source, Origin, Title, Status, Priority, Dates string
+	StatusID                                       int64
+	PriorityValue                                  domain.Priority
 	SourceKind                                     domain.OriginKind
 	StatusKind                                     domain.StatusKind
 	Start, Due                                     string
 	DeletedAt                                      string
 	Markdown                                       string
 	Recurrence                                     string
+	RecurrenceText                                 string
 	Blocked, Recurring                             bool
 	SubtasksDone, SubtasksTotal, Dependencies      int
 	Subtasks                                       []Subtask
@@ -60,7 +63,8 @@ func Tasks(in []domain.Task) []Task {
 		}
 		out = append(out, Task{
 			ID: v.ID, Source: v.Origin.Key, Origin: v.Origin.Name, SourceKind: v.Origin.Kind, Title: v.Title,
-			Status: v.Status.Name, StatusKind: v.Status.Kind, Priority: v.Priority.String(), Dates: dates,
+			Status: v.Status.Name, StatusID: v.StatusID, StatusKind: v.Status.Kind,
+			Priority: v.Priority.String(), PriorityValue: v.Priority, Dates: dates,
 			Markdown: v.Markdown, Blocked: v.Blocked, Recurring: v.Recurrence != nil,
 			SubtasksDone: done, SubtasksTotal: total, Dependencies: dependencies,
 			Subtasks: subtasks, DependencyIDs: append([]int64(nil), v.DependencyIDs...),
@@ -68,6 +72,7 @@ func Tasks(in []domain.Task) []Task {
 		})
 		if v.Recurrence != nil {
 			out[len(out)-1].Recurrence = v.Recurrence.HumanText()
+			out[len(out)-1].RecurrenceText = v.Recurrence.Text()
 		}
 		if v.Start != nil {
 			out[len(out)-1].Start = v.Start.String()

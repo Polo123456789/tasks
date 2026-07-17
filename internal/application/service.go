@@ -46,6 +46,20 @@ func (s *Service) Capabilities(source string) domain.Capabilities {
 	}
 	return capabilities
 }
+
+// Statuses returns the workflow statuses for a specific source. An empty
+// source resolves to the writable source, which is what creation forms need in
+// both local and global mode.
+func (s *Service) Statuses(ctx context.Context, source string) ([]domain.Status, error) {
+	if source == "" {
+		source = s.writableKey()
+	}
+	p, err := s.source(source)
+	if err != nil {
+		return nil, err
+	}
+	return p.Store.Statuses(ctx)
+}
 func (s *Service) CreateStatus(ctx context.Context, path, name string, initial bool) (domain.Status, error) {
 	if !s.Capabilities("").CanCreateStatus {
 		return domain.Status{}, domain.ErrForbidden
@@ -249,7 +263,32 @@ func (s *Service) UpdateTask(ctx context.Context, path string, t domain.Task) (d
 	if e != nil {
 		return t, e
 	}
-	return s.serial(path, func() (domain.Task, error) { return p.Store.UpdateTask(ctx, t) })
+	v, _ := s.locks.LoadOrStore(path, &sync.Mutex{})
+	m := v.(*sync.Mutex)
+	m.Lock()
+	defer m.Unlock()
+	current, e := p.Store.Task(ctx, t.ID)
+	if e != nil {
+		return t, e
+	}
+	if current.Version != t.Version {
+		return t, domain.ErrConflict
+	}
+	if current.Recurrence == nil && t.Recurrence != nil && !s.Capabilities(path).CanCreateRecurrence {
+		return t, domain.ErrForbidden
+	}
+	if t.Recurrence == nil {
+		t.RecurrenceAnchor = nil
+	} else if t.RecurrenceAnchor == nil {
+		if s.Clock == nil {
+			return t, domain.ValidationError{Field: "recurrence", Message: "clock is required"}
+		}
+		anchor := s.Clock.Today()
+		t.RecurrenceAnchor = &anchor
+	}
+	updated, e := p.Store.UpdateTask(ctx, t)
+	updated.Origin = p.Origin
+	return updated, e
 }
 func (s *Service) SetStatus(ctx context.Context, path string, id, status, version int64) (domain.Task, error) {
 	p, e := s.source(path)

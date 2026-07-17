@@ -53,6 +53,21 @@ func (b backend) Statuses(c context.Context) ([]domain.Status, error) {
 func (b backend) Create(c context.Context, title string) (domain.Task, error) {
 	return b.svc.CreateTask(c, domain.Task{Title: title})
 }
+func (b backend) SaveTask(c context.Context, path string, task domain.Task) (domain.Task, error) {
+	if task.ID == 0 {
+		return b.svc.CreateTask(c, task)
+	}
+	if path == "" {
+		path = b.path
+	}
+	return b.svc.UpdateTask(c, path, task)
+}
+func (b backend) FormStatuses(c context.Context, path string) ([]domain.Status, error) {
+	if path == "" && b.svc.Mode == domain.ModeLocal {
+		path = b.path
+	}
+	return b.svc.Statuses(c, path)
+}
 func (b backend) UpdateTitle(c context.Context, path string, id, version int64, title string) (domain.Task, error) {
 	if path == "" {
 		path = b.path

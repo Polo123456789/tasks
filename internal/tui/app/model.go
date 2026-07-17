@@ -34,6 +34,8 @@ type Backend interface {
 	List(context.Context, ports.TaskFilter) ([]domain.Task, error)
 	Statuses(context.Context) ([]domain.Status, error)
 	Create(context.Context, string) (domain.Task, error)
+	SaveTask(context.Context, string, domain.Task) (domain.Task, error)
+	FormStatuses(context.Context, string) ([]domain.Status, error)
 	UpdateTitle(context.Context, string, int64, int64, string) (domain.Task, error)
 	MoveStatus(context.Context, string, int64, int64, int) (domain.Task, error)
 	SetLifecycle(context.Context, string, int64, int64, string) (domain.Task, error)
@@ -178,6 +180,8 @@ type Model struct {
 	preserveSelectionID           int64
 	preserveSelectionSource       string
 	history                       []domain.HistoryEvent
+	form                          taskForm
+	nextFormRequestID             uint64
 }
 
 func New(b Backend) Model {
@@ -322,6 +326,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pickerSelected = 0
 			m.pickerOpen = true
 		}
+	case formLoaded:
+		if !m.form.open || v.requestID != m.form.requestID {
+			break
+		}
+		if v.detailErr != nil || v.statusesErr != nil {
+			m.form = newTaskForm(v)
+			m.form.loadFailed = true
+			m.form.errors["form"] = friendlyError(errors.Join(v.detailErr, v.statusesErr))
+			break
+		}
+		m.form = newTaskForm(v)
+	case formSaved:
+		if !m.form.open {
+			break
+		}
+		m.form.saving = false
+		if v.err != nil {
+			var validation domain.ValidationError
+			if errors.As(v.err, &validation) {
+				m.form.errors[validation.Field] = localizedValidation(validation.Field, validation.Message)
+			} else {
+				m.form.errors["form"] = friendlyError(v.err)
+			}
+			break
+		}
+		m.form = taskForm{}
+		m.notice = "Tarea actualizada"
+		if v.created {
+			m.notice = "Tarea creada"
+		}
+		m.preserveSelectionID = v.task.ID
+		m.preserveSelectionSource = v.task.Origin.Key
+		return m, m.load(false)
 	case detailLoaded:
 		if v.err != nil {
 			m.err = v.err
@@ -356,11 +393,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmAffected = v.affected
 		}
 	case created:
-		m.inputMode = false
 		m.err = v.err
 		if v.err == nil {
+			m.inputMode = false
 			m.notice = "Tarea creada"
 			m.preserveSelectionID = v.task.ID
+			m.preserveSelectionSource = v.task.Origin.Key
 			return m, m.load(false)
 		}
 	case mutated:
@@ -382,6 +420,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Type == tea.KeyCtrlC {
 			m.cancelDayWatch()
 			return m, tea.Quit
+		}
+		if m.form.open {
+			return m.updateTaskForm(v)
 		}
 		if m.paletteOpen {
 			return m.updatePalette(v)
@@ -647,9 +688,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.reloadFiltered("Filtros restablecidos")
 		case "n":
 			if m.backend.Capabilities("").CanCreateTask {
-				m.inputMode = true
-				m.inputAction = "create"
-				m.input = ""
+				return m.openTaskForm(false, false)
+			} else {
+				m.notice = "El origen global no está disponible para crear tareas"
+			}
+		case "N":
+			if m.backend.Capabilities("").CanCreateTask {
+				return m.openTaskForm(false, true)
 			} else {
 				m.notice = "El origen global no está disponible para crear tareas"
 			}
@@ -659,9 +704,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputAction = "rename-status"
 				m.input = m.statuses[m.selected].Name
 			} else if m.hasSelectedTask() {
-				m.inputMode = true
-				m.inputAction = "edit"
-				m.input = m.tasks[m.selected].Title
+				return m.openTaskForm(true, false)
 			}
 		case "a":
 			if m.view == 5 && m.backend.Capabilities("").CanCreateStatus {
@@ -1607,7 +1650,9 @@ func (m Model) View() string {
 		header += "  " + theme.Help.Render(summary)
 	}
 	var body string
-	if m.loading {
+	if m.form.open {
+		body = m.form.view(m.width, availableHeight)
+	} else if m.loading {
 		body = "Cargando…"
 	} else if m.err != nil {
 		message := "Error: " + friendlyError(m.err)
@@ -1690,6 +1735,18 @@ func panelView(title, content string, active bool, width int) string {
 }
 
 func (m Model) footerContent() string {
+	if m.form.open {
+		if m.form.loadFailed {
+			return "FORMULARIO No se pudieron cargar datos seguros para guardar · Esc cerrar"
+		}
+		if m.form.confirmDiscard {
+			return "CONFIRMAR  y/Enter descartar cambios · n/Esc continuar editando"
+		}
+		if m.form.compact {
+			return "CAPTURA    Enter/Ctrl+S crear · Esc cancelar\nTEXTO     ←/→ cursor · Ctrl+←/→ palabra · Ctrl+W borrar palabra · Ctrl+U/K borrar línea · pegado admitido"
+		}
+		return "FORMULARIO Tab/Shift+Tab campo · ↑/↓ campo · ←/→ selector · Enter/Ctrl+S guardar · Esc cancelar\nTEXTO     ←/→ cursor · Ctrl+←/→ palabra · Ctrl+W borrar palabra · Ctrl+U/K borrar línea · pegado admitido"
+	}
 	if m.paletteOpen {
 		return "PALETA    Escribir para buscar · ↑/↓ elegir · Enter ejecutar · Esc cancelar"
 	}

@@ -67,11 +67,11 @@ func Footer(context Context) string {
 			lines = append(lines, inspector)
 		}
 		if context.CanCreateTask {
-			lines = append(lines, "Crear      n nueva tarea")
+			lines = append(lines, "Crear      n nueva tarea (formulario) · N captura compacta")
 		}
 		if context.HasTask {
 			lines = append(lines,
-				"Tarea      e título · p prioridad · [/] estado · f finalizar · C cancelar · z reabrir",
+				"Tarea      e título+campos · p prioridad · [/] estado · f finalizar · C cancelar · z reabrir",
 				"Contenido  s inicio · v vencimiento · m Markdown · d papelera · H historial",
 			)
 			if context.CanCreateRecurrence || context.Recurring {
@@ -134,7 +134,8 @@ func Full(global bool) string {
 		"  PgUp/PgDn  cambiar mes          F1 o Esc  cerrar ayuda       q salir",
 		"",
 		"Tarea seleccionada",
-		"  n crear      e título      p prioridad      s inicio      v vencimiento",
+		"  n formulario completo   N captura compacta   e editar formulario   p prioridad",
+		"  s inicio      v vencimiento",
 		"  m Markdown   [/] estado    f finalizar      C cancelar    z reabrir",
 		"  d papelera   H historial",
 		"",

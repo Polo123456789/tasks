@@ -549,7 +549,7 @@ func (s *Store) UpdateTask(ctx context.Context, t domain.Task) (domain.Task, err
 		return t, e
 	}
 	defer tx.Rollback()
-	r, e := tx.ExecContext(ctx, "UPDATE tasks SET title=?,priority=?,markdown=?,start_date=?,due_date=?,recurrence=?,recurrence_anchor=?,version=version+1,updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL", strings.TrimSpace(t.Title), t.Priority, t.Markdown, nullableDate(t.Start), nullableDate(t.Due), rec, nullableDate(t.RecurrenceAnchor), now, t.ID, t.Version)
+	r, e := tx.ExecContext(ctx, "UPDATE tasks SET title=?,status_id=?,priority=?,markdown=?,start_date=?,due_date=?,recurrence=?,recurrence_anchor=?,version=version+1,updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL", strings.TrimSpace(t.Title), t.StatusID, t.Priority, t.Markdown, nullableDate(t.Start), nullableDate(t.Due), rec, nullableDate(t.RecurrenceAnchor), now, t.ID, t.Version)
 	if e != nil {
 		return t, e
 	}

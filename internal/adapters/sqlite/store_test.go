@@ -49,6 +49,32 @@ func TestLifecycleAndOptimisticConflict(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskPersistsStructuredFormFieldsAtomically(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	status, err := s.CreateStatus(ctx, "En curso", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateTask(ctx, domain.Task{Title: "Antes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := domain.ParseDate("2026-07-20")
+	due, _ := domain.ParseDate("2026-07-25")
+	task.Title = "Después"
+	task.StatusID = status.ID
+	task.Priority = domain.PriorityUrgent
+	task.Start, task.Due = &start, &due
+	updated, err := s.UpdateTask(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Después" || updated.StatusID != status.ID || updated.Priority != domain.PriorityUrgent || updated.Start == nil || updated.Due == nil || updated.Version != task.Version+1 {
+		t.Fatalf("updated=%#v", updated)
+	}
+}
+
 func TestImportProjectPopulatesCompleteSnapshot(t *testing.T) {
 	s := testStore(t)
 	start, _ := domain.ParseDate("2026-07-20")

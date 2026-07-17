@@ -82,7 +82,7 @@ Criterios de aceptación:
 - Las acciones continúan aplicándose únicamente al elemento que muestra foco visible.
 - El modelo funciona completamente con teclado y después de redimensionar la terminal.
 
-## B-005 — Formulario unificado de creación y edición
+## B-005 — Formulario unificado de creación y edición — Completada
 
 Permitir completar o modificar los principales atributos de una tarea en una sola interacción, conservando una captura rápida para el título.
 

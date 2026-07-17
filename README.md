@@ -199,6 +199,8 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 - `←`/`→` o `h`/`l`: cambiar vista. Cada vista recuerda su tarea, ventana visible, panel y fila del inspector.
 - `Tab` / `Shift+Tab`: cambiar el foco entre la vista principal y el inspector. `↑`/`↓` o `j`/`k` recorren el panel activo; el borde, el título `ACTIVA` y la fila resaltada muestran dónde se aplicará la acción.
 - El inspector permite recorrer campos, subtareas, dependencias e historial. `Enter` ejecuta la acción natural de la fila; `I` alterna disposición normal, expandida y oculta, y `Espacio` fija o libera la disposición al cambiar de vista.
+- `n`: abrir el formulario completo de una tarea; `e`: reutilizarlo con la tarea seleccionada; `N`: captura compacta inmediata de solo título. El formulario recorre título, estado, prioridad, inicio, vencimiento y recurrencia con `Tab`/`Shift+Tab`, y muestra el destino/origen antes de guardar.
+- En campos de texto, `←`/`→` mueve el cursor, `Ctrl+←`/`Ctrl+→` salta por palabras, `Ctrl+W` borra la palabra anterior y `Ctrl+U`/`Ctrl+K` borra hasta el inicio/final. El pegado preserva el borrador. `Enter` o `Ctrl+S` guarda todos los campos como una sola operación; `Esc` solo pide confirmación si hubo cambios.
 - `PgUp` / `PgDn`: periodo anterior/siguiente en Calendario y Gantt.
 - `,` / `.`: desplazar la ventana de días del Gantt cuando el mes no cabe completo.
 - `n`, `e`, `p`, `s`, `v`: crear, editar título, prioridad, inicio y vencimiento.
@@ -215,7 +217,7 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 
 Las operaciones que relacionan elementos no requieren memorizar IDs: dependencias, filtro local por estado y destino al eliminar un estado presentan selectores con ID, título y estado. Los IDs permanecen visibles en Tabla, detalle y Estados para diagnóstico.
 
-En modo global, `n` crea siempre en el origen propio. Las acciones de creación anidada aparecen para tareas globales y muestran una explicación cuando la tarea pertenece a un proyecto registrado. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
+En modo global, `n` y `N` crean siempre en el origen propio, que aparece explícitamente en el formulario completo. Las acciones de creación anidada aparecen para tareas globales y muestran una explicación cuando la tarea pertenece a un proyecto registrado. La selección solo recorre elementos que realmente aparecen en Calendario o Gantt, y todas las listas muestran la fila activa y marcadores `↑`/`↓` cuando existe contenido fuera del viewport.
 
 La paleta muestra primero los comandos disponibles para la vista, selección y origen actuales. Los demás resultados explican por qué no están disponibles y conservan visible su atajo. Ejecutar desde la paleta recorre exactamente el mismo manejador que pulsar ese atajo; al cancelar no cambian la selección, los filtros ni el periodo visible. Los formularios, selectores, confirmaciones, historial y ayuda ya abiertos tienen precedencia sobre `Ctrl+P`.
 

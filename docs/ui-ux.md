@@ -14,6 +14,7 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 8. **Color como refuerzo.** Tabla, Calendario y Gantt comparten una paleta estable por estado: finalizadas en verde, canceladas en tono apagado y estados normales personalizados en colores diferenciados por nombre. El nombre, símbolo o leyenda permanece visible; ninguna distinción depende únicamente del color y el resaltado de selección tiene prioridad de contraste.
 9. **Paleta contextual.** `Ctrl+P` busca comandos por nombre, descripción y sinónimos. Ordena primero los válidos para la vista, selección y origen, explica los deshabilitados y ejecuta el mismo comando interno que el atajo mostrado.
 10. **Foco de panel explícito.** Vista e Inspector tienen borde y título de foco. `Tab`/`Shift+Tab` cambia de panel y `↑`/`↓` recorre únicamente el panel activo, de modo que una acción anidada nunca usa una selección invisible.
+11. **Formulario único y transaccional.** `n` crea y `e` edita mediante el mismo formulario de título, estado, prioridad, fechas y recurrencia. `N` conserva una captura compacta solo con título. La validación permanece junto al campo y el backend recibe una sola mutación optimista con todos los valores.
 
 ## Mapa de interacción
 
@@ -36,6 +37,14 @@ Este documento define el contrato de usabilidad de `tasks`. Complementa `SPEC.md
 - `c`: elige primero el tipo de recurrencia; semanal usa selección múltiple de días y mensual por día de semana usa selectores consecutivos de ordinal y día. Solo el día numérico del mes requiere escribir un valor.
 
 Los selectores usan `↑`/`↓`, `Enter` y `Esc`. Una lista vacía lo indica explícitamente.
+
+## Formulario de tarea
+
+- `Tab`/`Shift+Tab` o `↑`/`↓` recorre los campos; `←`/`→` cambia estado y prioridad o mueve el cursor en texto.
+- El editor admite saltos por palabras (`Ctrl+←`/`Ctrl+→`), pegado, `Ctrl+W`, `Ctrl+U` y `Ctrl+K`. El cursor se muestra dentro del valor activo.
+- `Enter`/`Ctrl+S` valida y guarda el conjunto completo. Errores de título, fecha o recurrencia aparecen debajo del campo sin cerrar ni reemplazar el formulario.
+- El borrador sobrevive a validaciones y errores recuperables. `Esc` cierra directamente un formulario intacto y solicita confirmación solo cuando su firma difiere de los valores iniciales.
+- Crear, editar o cancelar no modifica la selección, el viewport ni el foco previo. El formulario identifica el proyecto u origen global que recibirá la escritura antes de confirmarla.
 
 ### Paleta de comandos
 
@@ -69,7 +78,7 @@ Un aviso no reemplaza el mapa de acciones: ocupa una línea propia sobre él. El
 
 ## Mensajes y restricciones
 
-- `n` en global abre el formulario de una tarea propia. Sobre tareas globales también se permiten subtareas, dependencias y recurrencias; sobre tareas de proyecto, esas acciones explican que no se pueden añadir elementos desde global.
+- `n` en global abre el formulario de una tarea propia y muestra ese destino; `N` ofrece la variante compacta. Sobre tareas globales también se permiten subtareas, dependencias y recurrencias; sobre tareas de proyecto, esas acciones explican que no se pueden añadir elementos desde global.
 - Los conflictos de versión indican que se debe recargar con `r`.
 - Las advertencias de papelera nombran las tareas afectadas (`#ID título`), no solo IDs aislados.
 - Los formularios de fecha usan `AAAA-MM-DD`; los errores se traducen antes de mostrarse.

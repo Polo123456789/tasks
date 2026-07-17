@@ -40,6 +40,14 @@ type fakeBackend struct {
 	reorderStatusCalls int
 	deleteStatusCalls  int
 	listErr            error
+	workflowStatuses   []domain.Status
+	saveCalls          int
+	savedTask          domain.Task
+	saveErr            error
+	createCalls        int
+	createErr          error
+	detailErr          error
+	formStatusesErr    error
 }
 
 func (b *fakeBackend) Mode() domain.Mode { return b.mode }
@@ -79,8 +87,29 @@ func (b *fakeBackend) List(_ context.Context, filter ports.TaskFilter) ([]domain
 	return b.tasks, b.listErr
 }
 func (b *fakeBackend) Statuses(context.Context) ([]domain.Status, error) { return nil, nil }
-func (b *fakeBackend) Create(context.Context, string) (domain.Task, error) {
-	return domain.Task{}, nil
+func (b *fakeBackend) Create(_ context.Context, title string) (domain.Task, error) {
+	b.createCalls++
+	return domain.Task{ID: 98, Title: title, Origin: domain.TaskOrigin{Key: domain.GlobalOriginKey}}, b.createErr
+}
+func (b *fakeBackend) SaveTask(_ context.Context, _ string, task domain.Task) (domain.Task, error) {
+	b.saveCalls++
+	b.savedTask = task
+	if task.ID == 0 {
+		task.ID = 99
+		if b.mode == domain.ModeGlobal {
+			task.Origin = domain.TaskOrigin{Kind: domain.OriginGlobal, Key: domain.GlobalOriginKey, Name: "Global"}
+		}
+	}
+	return task, b.saveErr
+}
+func (b *fakeBackend) FormStatuses(context.Context, string) ([]domain.Status, error) {
+	if b.formStatusesErr != nil {
+		return nil, b.formStatusesErr
+	}
+	if len(b.workflowStatuses) > 0 {
+		return b.workflowStatuses, nil
+	}
+	return []domain.Status{{ID: 1, Name: "Pendiente", Kind: domain.StatusNormal, Initial: true}}, nil
 }
 func (b *fakeBackend) UpdateTitle(context.Context, string, int64, int64, string) (domain.Task, error) {
 	b.updateCalls++
@@ -103,6 +132,9 @@ func (b *fakeBackend) UpdateDate(context.Context, string, int64, int64, string, 
 	return domain.Task{}, nil
 }
 func (b *fakeBackend) Detail(_ context.Context, _ string, id int64) (domain.Task, error) {
+	if b.detailErr != nil {
+		return domain.Task{}, b.detailErr
+	}
 	for _, task := range append(b.tasks, b.deleted...) {
 		if task.ID == id {
 			return task, nil
@@ -350,17 +382,19 @@ func TestSelectionClampsWhenSwitchingToShorterResult(t *testing.T) {
 }
 
 func TestEditTitleAndMoveStatusRunAsynchronousMutations(t *testing.T) {
-	task := domain.Task{ID: 3, Title: "old", Version: 4}
+	task := domain.Task{ID: 3, Title: "old", StatusID: 1, Version: 4}
 	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
 	model := New(backend)
 	updated, _ := model.Update(loaded{tasks: backend.tasks})
 	model = updated.(Model)
-	updated, _ = model.Update(key("e"))
+	updated, formCommand := model.Update(key("e"))
 	model = updated.(Model)
-	if !model.inputMode || model.input != "old" || model.inputAction != "edit" {
-		t.Fatalf("edit state: inputMode=%v input=%q action=%q", model.inputMode, model.input, model.inputAction)
+	if formCommand == nil || !model.form.open || !model.form.loading {
+		t.Fatalf("edit form state: open=%v loading=%v command=%v", model.form.open, model.form.loading, formCommand != nil)
 	}
-	model.input = "new"
+	updated, _ = model.Update(formCommand())
+	model = updated.(Model)
+	model.form.text[formTitle] = newTextField("new")
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
 	if cmd == nil {
@@ -368,8 +402,8 @@ func TestEditTitleAndMoveStatusRunAsynchronousMutations(t *testing.T) {
 	}
 	updated, reload := model.Update(cmd())
 	model = updated.(Model)
-	if backend.updateCalls != 1 || reload == nil || model.notice != "Tarea editada" {
-		t.Fatalf("update calls=%d notice=%q reload=%v", backend.updateCalls, model.notice, reload != nil)
+	if backend.saveCalls != 1 || reload == nil || model.notice != "Tarea actualizada" || backend.savedTask.Title != "new" {
+		t.Fatalf("save calls=%d task=%#v notice=%q reload=%v", backend.saveCalls, backend.savedTask, model.notice, reload != nil)
 	}
 	updated, cmd = model.Update(key("]"))
 	model = updated.(Model)
@@ -776,10 +810,15 @@ func TestGlobalTaskCreationOpensOwnTaskForm(t *testing.T) {
 	model := New(backend)
 	updated, _ := model.Update(loaded{tasks: backend.tasks})
 	model = updated.(Model)
-	updated, _ = model.Update(key("n"))
+	updated, command := model.Update(key("n"))
 	model = updated.(Model)
-	if !model.inputMode || model.inputAction != "create" {
-		t.Fatalf("inputMode=%v action=%q notice=%q", model.inputMode, model.inputAction, model.notice)
+	if command == nil || !model.form.open || !model.form.loading {
+		t.Fatalf("form=%#v command=%v notice=%q", model.form, command != nil, model.notice)
+	}
+	updated, _ = model.Update(command())
+	model = updated.(Model)
+	if !model.form.open || model.form.destination != "Global · origen propio" {
+		t.Fatalf("loaded form=%#v", model.form)
 	}
 }
 

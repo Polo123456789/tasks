@@ -87,6 +87,42 @@ func TestGlobalModeCreatesCompleteTasksOnlyInGlobalSource(t *testing.T) {
 	}
 }
 
+func TestFormStatusesResolveWritableAndSelectedSources(t *testing.T) {
+	globalStore, err := db.Open(filepath.Join(t.TempDir(), "global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer globalStore.Close()
+	projectStore, err := db.Open(filepath.Join(t.TempDir(), "project.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projectStore.Close()
+	projectStatus, err := projectStore.CreateStatus(context.Background(), "Proyecto", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Mode: domain.ModeGlobal, WritableSource: domain.GlobalOriginKey, Sources: []Source{
+		testSource(domain.OriginGlobal, domain.GlobalOriginKey, "Global", globalStore),
+		testSource(domain.OriginProject, "project.tasks", "Project", projectStore),
+	}}
+	globalStatuses, err := service.Statuses(context.Background(), "")
+	if err != nil || len(globalStatuses) == 0 {
+		t.Fatalf("global statuses=%#v err=%v", globalStatuses, err)
+	}
+	projectStatuses, err := service.Statuses(context.Background(), "project.tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, status := range projectStatuses {
+		found = found || status.ID == projectStatus.ID && status.Name == "Proyecto"
+	}
+	if !found {
+		t.Fatalf("project status missing: %#v", projectStatuses)
+	}
+}
+
 func TestUnavailableGlobalSourceDisablesCreationAndReturnsItsError(t *testing.T) {
 	unavailable := errors.New("global store unavailable")
 	service := Service{
@@ -128,6 +164,27 @@ func TestGlobalModeCanModifyExistingRecurrenceButNotAddOne(t *testing.T) {
 	}
 	if _, err = service.UpdateTaskRecurrence(context.Background(), path, plain.ID, plain.Version, &daily); err != domain.ErrForbidden {
 		t.Fatalf("add recurrence globally: %v", err)
+	}
+}
+
+func TestGlobalStructuredUpdateCannotAddRecurrenceToProject(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "project.tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	plain, err := store.CreateTask(context.Background(), domain.Task{Title: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	today, _ := domain.ParseDate("2026-07-15")
+	service := Service{Mode: domain.ModeGlobal, Clock: fixedClock{today}, Sources: []Source{
+		testSource(domain.OriginProject, "project.tasks", "Project", store),
+	}, WritableSource: domain.GlobalOriginKey}
+	daily := domain.Recurrence{Kind: domain.Daily}
+	plain.Recurrence = &daily
+	if _, err = service.UpdateTask(context.Background(), "project.tasks", plain); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("structured update added recurrence to project: %v", err)
 	}
 }
 

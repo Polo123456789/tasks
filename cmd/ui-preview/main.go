@@ -87,6 +87,12 @@ func (f fake) List(ctx context.Context, filter ports.TaskFilter) ([]domain.Task,
 	return tasks, nil
 }
 func (fake) Create(context.Context, string) (domain.Task, error) { return domain.Task{}, nil }
+func (fake) SaveTask(context.Context, string, domain.Task) (domain.Task, error) {
+	return domain.Task{}, nil
+}
+func (fake) FormStatuses(context.Context, string) ([]domain.Status, error) {
+	return (fake{}).Statuses(context.Background())
+}
 func (fake) UpdateTitle(context.Context, string, int64, int64, string) (domain.Task, error) {
 	return domain.Task{}, nil
 }
