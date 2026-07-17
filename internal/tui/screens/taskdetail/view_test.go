@@ -3,7 +3,9 @@ package taskdetail
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -19,6 +21,38 @@ func TestViewShowsMetadataAndTruncatedMarkdown(t *testing.T) {
 	for _, text := range []string{"Detailed", "origen alpha", "bloqueada", "automáticamente", "subtareas", "1/2", "dependencias 3", "one", "…"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("view lacks %q: %s", text, view)
+		}
+	}
+}
+
+func TestInspectorRowsCoverFieldsSubtasksDependenciesAndHistory(t *testing.T) {
+	task := presenter.Task{
+		ID: 1, Title: "Task", Status: "Pending", Priority: "High", Markdown: "# Notes",
+		Subtasks:      []presenter.Subtask{{ID: 2, Title: "Child", Status: "Pending"}},
+		DependencyIDs: []int64{9},
+	}
+	history := []domain.HistoryEvent{{ID: 3, Kind: "created", Detail: "imported", CreatedAt: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}}
+	rows := Rows(task, history)
+	if len(rows) != 10 || rows[0].Field != "title" || rows[7].Kind != RowSubtask || rows[8].Kind != RowDependency || rows[9].Kind != RowHistory {
+		t.Fatalf("rows=%#v", rows)
+	}
+	view := InspectorView(task, history, 9, 60, 12, true, true, true)
+	for _, expected := range []string{"Inspector · ACTIVO · EXPANDIDO · FIJADO", "Historial", "creada · imported"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("inspector missing %q:\n%s", expected, view)
+		}
+	}
+}
+
+func TestInspectorViewNeverExceedsAssignedHeight(t *testing.T) {
+	task := presenter.Task{ID: 1, Title: "Crowded"}
+	for id := int64(1); id <= 20; id++ {
+		task.Subtasks = append(task.Subtasks, presenter.Subtask{ID: id, Title: "Child", Status: "Pending"})
+	}
+	for _, height := range []int{3, 8, 20} {
+		view := InspectorView(task, nil, 12, 90, height, true, height > 8, false)
+		if got := lipgloss.Height(view); got > height {
+			t.Fatalf("height=%d rendered=%d:\n%s", height, got, view)
 		}
 	}
 }

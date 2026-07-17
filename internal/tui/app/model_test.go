@@ -10,6 +10,7 @@ import (
 	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/ports"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
+	"github.com/Polo123456789/tasks/internal/tui/screens/taskdetail"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -408,6 +409,8 @@ func TestSubtaskAndDependencyInteractions(t *testing.T) {
 	}
 
 	model.inputMode = false
+	updated, _ = model.Update(key("J"))
+	model = updated.(Model)
 	updated, cmd = model.Update(key("t"))
 	model = updated.(Model)
 	_, _ = model.Update(cmd())
@@ -653,7 +656,7 @@ func TestContextualFooterExposesEveryTaskActionAtMinimumSize(t *testing.T) {
 		"←/→ cambiar vista", "n nueva tarea", "e título", "p prioridad", "[/] estado",
 		"f finalizar", "C cancelar", "z reabrir", "s inicio", "v vencimiento", "m Markdown",
 		"c recurrencia", "d papelera", "H historial", "a añadir subtarea", "g agregar dependencia",
-		"G quitar dependencia", "J/K seleccionar", "E renombrar", "t completar/reabrir",
+		"G quitar dependencia", "↑/↓ seleccionar", "E renombrar", "t completar/reabrir",
 		"{/} cambiar estado", "/ título", "? Markdown", "S estado", "D fechas", "1 prioridad",
 		"B bloqueadas", "R recurrentes", "F mostrar/ocultar finalizadas", "X mostrar/ocultar",
 		"o ordenar", "0 limpiar", "r recargar", "q salir",
@@ -1087,5 +1090,217 @@ func TestCommandPaletteTruncatesLongQueryAndDisabledReasonToTerminalWidth(t *tes
 	palette = model.paletteView(8)
 	if width := lipgloss.Width(palette); width > 90 {
 		t.Fatalf("disabled reason rendered %d columns:\n%s", width, palette)
+	}
+}
+
+func TestPanelFocusNavigatesInspectorRowsAndScopesNestedActions(t *testing.T) {
+	start, _ := domain.ParseDate("2026-07-15")
+	task := domain.Task{
+		ID: 1, Title: "parent", Version: 3, Start: &start,
+		Origin:        domain.TaskOrigin{Kind: domain.OriginProject, Key: "/p.tasks", Name: "p"},
+		Subtasks:      []domain.Subtask{{ID: 8, Title: "child", Status: domain.Status{Name: "Pending"}}},
+		DependencyIDs: []int64{42},
+	}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	events := []domain.HistoryEvent{{ID: 9, Kind: "created", CreatedAt: time.Now()}}
+	updated, _ = model.Update(detailLoaded{task: task, history: events})
+	model = updated.(Model)
+
+	updated, command := model.Update(key("t"))
+	model = updated.(Model)
+	if command != nil || backend.toggleSubCalls != 0 {
+		t.Fatal("inactive inspector accepted a subtask action")
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(Model)
+	if model.panelFocus != focusInspector || model.selected != 0 {
+		t.Fatalf("focus=%v selected=%d", model.panelFocus, model.selected)
+	}
+	for range 7 {
+		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(Model)
+	}
+	row, ok := model.focusedInspectorRow()
+	if !ok || row.Kind != taskdetail.RowSubtask || model.selectedSubtask != 0 {
+		t.Fatalf("focused row=%#v ok=%v", row, ok)
+	}
+	updated, command = model.Update(key("t"))
+	model = updated.(Model)
+	if command == nil {
+		t.Fatal("focused subtask action did not run")
+	}
+	_ = command()
+	if backend.toggleSubCalls != 1 {
+		t.Fatalf("toggle calls=%d", backend.toggleSubCalls)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(Model)
+	row, _ = model.focusedInspectorRow()
+	if row.Kind != taskdetail.RowDependency || row.ID != 42 {
+		t.Fatalf("dependency row=%#v", row)
+	}
+	updated, command = model.Update(key("G"))
+	model = updated.(Model)
+	if command == nil {
+		t.Fatal("focused dependency action did not run")
+	}
+	_ = command()
+	if backend.removeDepCalls != 1 {
+		t.Fatalf("remove dependency calls=%d", backend.removeDepCalls)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if !model.historyOpen {
+		t.Fatal("history row did not open the history panel")
+	}
+}
+
+func TestPanelNavigationIsRememberedPerViewAndPinKeepsLayout(t *testing.T) {
+	tasks := []domain.Task{{ID: 1, Title: "one"}, {ID: 2, Title: "two"}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: tasks}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: tasks})
+	model = updated.(Model)
+	model.selected = 1
+	updated, _ = model.Update(detailLoaded{task: tasks[1]})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(Model)
+	for range 3 {
+		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(Model)
+	}
+	updated, _ = model.Update(key("I"))
+	model = updated.(Model)
+	if model.inspectorMode != inspectorExpanded {
+		t.Fatal("inspector did not expand")
+	}
+
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model = updated.(Model)
+	if command == nil || model.view != 0 || model.selected != 0 || model.panelFocus != focusMain || model.inspectorMode != inspectorNormal {
+		t.Fatalf("kanban state view=%d selected=%d focus=%v mode=%v", model.view, model.selected, model.panelFocus, model.inspectorMode)
+	}
+	updated, _ = model.Update(command())
+	model = updated.(Model)
+	updated, command = model.Update(tea.KeyMsg{Type: tea.KeyRight})
+	model = updated.(Model)
+	if command == nil || model.view != 1 || model.selected != 1 || model.panelFocus != focusInspector || model.inspectorCursor != 3 || model.inspectorMode != inspectorExpanded {
+		t.Fatalf("restored table state view=%d selected=%d focus=%v cursor=%d mode=%v", model.view, model.selected, model.panelFocus, model.inspectorCursor, model.inspectorMode)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model = updated.(Model)
+	if !model.inspectorPinned || model.inspectorMode != inspectorExpanded || model.panelFocus != focusInspector {
+		t.Fatalf("pinned layout was not retained: pinned=%v mode=%v focus=%v", model.inspectorPinned, model.inspectorMode, model.panelFocus)
+	}
+}
+
+func TestInspectorCanHideExpandAndRenderWithinResizedTerminal(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "task", Subtasks: []domain.Subtask{{ID: 2, Title: "child"}}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(detailLoaded{task: task})
+	model = updated.(Model)
+	for _, size := range []tea.WindowSizeMsg{{Width: 90, Height: 40}, {Width: 130, Height: 50}} {
+		updated, _ = model.Update(size)
+		model = updated.(Model)
+		updated, _ = model.Update(key("I"))
+		model = updated.(Model)
+		view := model.View()
+		if !strings.Contains(view, "EXPANDIDO") || strings.Contains(view, "Vista principal") || lipgloss.Width(view) > size.Width || lipgloss.Height(view) > size.Height {
+			t.Fatalf("expanded render %dx%d rendered %dx%d:\n%s", size.Width, size.Height, lipgloss.Width(view), lipgloss.Height(view), view)
+		}
+		updated, _ = model.Update(key("I"))
+		model = updated.(Model)
+		if view = model.View(); strings.Contains(view, "Inspector ·") || !strings.Contains(view, "Vista principal · ACTIVA") {
+			t.Fatalf("hidden inspector render:\n%s", view)
+		}
+		updated, _ = model.Update(key("I"))
+		model = updated.(Model)
+	}
+}
+
+func TestExpandedInspectorAlwaysOwnsFocusAndTabRestoresMainPanel(t *testing.T) {
+	tasks := []domain.Task{{ID: 1, Title: "one"}, {ID: 2, Title: "two"}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: tasks}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(detailLoaded{task: tasks[0]})
+	model = updated.(Model)
+	updated, _ = model.Update(key("I"))
+	model = updated.(Model)
+	if model.inspectorMode != inspectorExpanded || model.panelFocus != focusInspector || !strings.Contains(model.View(), "Inspector · ACTIVO · EXPANDIDO") {
+		t.Fatalf("expanded focus mode=%v focus=%v\n%s", model.inspectorMode, model.panelFocus, model.View())
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(Model)
+	if model.selected != 0 || model.inspectorCursor != 1 {
+		t.Fatalf("expanded down selected=%d cursor=%d", model.selected, model.inspectorCursor)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(Model)
+	if model.inspectorMode != inspectorNormal || model.panelFocus != focusMain || !strings.Contains(model.View(), "Vista principal · ACTIVA") {
+		t.Fatalf("tab from expanded mode=%v focus=%v\n%s", model.inspectorMode, model.panelFocus, model.View())
+	}
+}
+
+func TestCalendarAndGanttRememberIndependentTemporalViewports(t *testing.T) {
+	backend := &fakeBackend{mode: domain.ModeLocal}
+	model := NewAt(backend, "calendar")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	model = updated.(Model)
+	calendarMonth := model.calendarMonth
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRight})
+	model = updated.(Model)
+	if model.view != 3 || model.calendarMonth.Month() != time.July {
+		t.Fatalf("new gantt viewport view=%d month=%s", model.view, model.calendarMonth.Month())
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	model = updated.(Model)
+	ganttMonth := model.calendarMonth
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model = updated.(Model)
+	if !model.calendarMonth.Equal(calendarMonth) || model.calendarMonth.Equal(ganttMonth) {
+		t.Fatalf("calendar=%v want=%v gantt=%v", model.calendarMonth, calendarMonth, ganttMonth)
+	}
+}
+
+func TestHiddenInspectorDisablesNestedNavigationAndContextHelp(t *testing.T) {
+	task := domain.Task{ID: 1, Title: "parent", Subtasks: []domain.Subtask{{ID: 2, Title: "one"}, {ID: 3, Title: "two"}}}
+	backend := &fakeBackend{mode: domain.ModeLocal, tasks: []domain.Task{task}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	model = updated.(Model)
+	updated, _ = model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(detailLoaded{task: task})
+	model = updated.(Model)
+	model.inspectorMode = inspectorHidden
+	model.panelFocus = focusMain
+	if enabled, reason := model.paletteAvailability(paletteSubtaskNext); enabled || !strings.Contains(reason, "muestra el inspector") {
+		t.Fatalf("hidden subtask palette enabled=%v reason=%q", enabled, reason)
+	}
+	footer := model.footerContent()
+	for _, hidden := range []string{"Enter actuar sobre la fila", "Espacio fijar", "Subtarea"} {
+		if strings.Contains(footer, hidden) {
+			t.Fatalf("hidden inspector footer exposes %q:\n%s", hidden, footer)
+		}
 	}
 }

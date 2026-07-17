@@ -22,6 +22,7 @@ const (
 	paletteTaskView
 	paletteMonthView
 	paletteGanttView
+	paletteInspector
 	paletteTask
 	paletteCreateTask
 	paletteSubtask
@@ -59,6 +60,9 @@ var paletteCatalog = []paletteAction{
 	{Name: "Vista anterior", Description: "Cambiar al panel principal anterior", Synonyms: "navegar pantalla izquierda", Shortcut: "← / h", Key: "h", Requirement: paletteAlways},
 	{Name: "Seleccionar siguiente", Description: "Mover la selección una fila hacia abajo", Synonyms: "navegar tarea estado elemento", Shortcut: "↓ / j", Key: "j", Requirement: paletteSelectNext},
 	{Name: "Seleccionar anterior", Description: "Mover la selección una fila hacia arriba", Synonyms: "navegar tarea estado elemento", Shortcut: "↑ / k", Key: "k", Requirement: paletteSelectPrevious},
+	{Name: "Cambiar foco de panel", Description: "Alternar entre la vista principal y el inspector", Synonyms: "tabulador panel detalle", Shortcut: "Tab", Key: "tab", Requirement: paletteInspector},
+	{Name: "Cambiar tamaño del inspector", Description: "Alternar normal, expandido y oculto", Synonyms: "detalle mostrar esconder ampliar", Shortcut: "I", Key: "I", Requirement: paletteTask},
+	{Name: "Fijar o liberar inspector", Description: "Conservar su disposición al cambiar de vista", Synonyms: "detalle pin anclar", Shortcut: "Espacio", Key: "space", Requirement: paletteInspector},
 	{Name: "Mes anterior", Description: "Mostrar el periodo mensual anterior", Synonyms: "calendario gantt fecha", Shortcut: "PgUp", Key: "pgup", Requirement: paletteMonthView},
 	{Name: "Mes siguiente", Description: "Mostrar el periodo mensual siguiente", Synonyms: "calendario gantt fecha", Shortcut: "PgDn", Key: "pgdown", Requirement: paletteMonthView},
 	{Name: "Gantt siete días atrás", Description: "Desplazar la ventana temporal hacia atrás", Synonyms: "cronograma fecha izquierda", Shortcut: ",", Key: ",", Requirement: paletteGanttView},
@@ -200,6 +204,11 @@ func (m Model) paletteAvailability(requirement paletteRequirement) (bool, string
 			return true, ""
 		}
 		return false, "solo está disponible en Gantt"
+	case paletteInspector:
+		if hasTask && m.inspectorMode != inspectorHidden {
+			return true, ""
+		}
+		return false, "muestra el inspector de una tarea visible"
 	case paletteTask:
 		if hasTask {
 			return true, ""
@@ -211,18 +220,24 @@ func (m Model) paletteAvailability(requirement paletteRequirement) (bool, string
 		}
 		return false, "el origen escribible no está disponible"
 	case paletteSubtask:
-		if hasSubtask {
+		if _, ok := m.focusedSubtask(); ok {
 			return true, ""
 		}
-		return false, "la tarea no tiene una subtarea seleccionable"
+		return false, "enfoca una subtarea visible en el inspector"
 	case paletteSubtaskNext:
-		if hasSubtask && m.selectedSubtask < len(m.detail.Subtasks)-1 {
+		if hasSubtask && m.inspectorMode != inspectorHidden && m.selectedSubtask < len(m.detail.Subtasks)-1 {
 			return true, ""
+		}
+		if m.inspectorMode == inspectorHidden {
+			return false, "muestra el inspector para navegar sus subtareas"
 		}
 		return false, "no hay otra subtarea después de la selección"
 	case paletteSubtaskPrevious:
-		if hasSubtask && m.selectedSubtask > 0 {
+		if hasSubtask && m.inspectorMode != inspectorHidden && m.selectedSubtask > 0 {
 			return true, ""
+		}
+		if m.inspectorMode == inspectorHidden {
+			return false, "muestra el inspector para navegar sus subtareas"
 		}
 		return false, "no hay otra subtarea antes de la selección"
 	case paletteCreateSubtask:
@@ -299,6 +314,10 @@ func (m Model) paletteAvailability(requirement paletteRequirement) (bool, string
 }
 
 func (m Model) canMoveSelection(direction int) bool {
+	if m.panelFocus == focusInspector && m.inspectorMode != inspectorHidden {
+		target := m.inspectorCursor + direction
+		return target >= 0 && target < len(m.inspectorRows())
+	}
 	if m.view == 4 {
 		target := m.selected + direction
 		return target >= 0 && target < len(m.deleted)
@@ -386,6 +405,10 @@ func paletteKeyMessage(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyPgUp}
 	case "pgdown":
 		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "space":
+		return tea.KeyMsg{Type: tea.KeySpace}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}

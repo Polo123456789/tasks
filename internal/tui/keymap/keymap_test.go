@@ -21,7 +21,7 @@ func TestFooterChangesWithScreenAndSelection(t *testing.T) {
 		{
 			name:    "gantt task",
 			context: Context{View: 3, HasTask: true, HasSubtask: true, HasDependency: true},
-			want:    []string{"PgUp/PgDn cambiar mes", ",/. desplazar 7 días", "G quitar dependencia", "J/K seleccionar"},
+			want:    []string{"PgUp/PgDn cambiar mes", ",/. desplazar 7 días", "G quitar dependencia", "↑/↓ seleccionar"},
 		},
 		{
 			name:    "trash selection",

@@ -180,7 +180,7 @@ func TestE2EInitCreateCloseAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForText(t, output, "Subtarea creada")
-	if _, err := terminal.Write([]byte("t")); err != nil {
+	if _, err := terminal.Write([]byte("\t" + strings.Repeat("\x1b[B", 7) + "t")); err != nil {
 		t.Fatal(err)
 	}
 	waitForText(t, output, "Subtarea actualizada")

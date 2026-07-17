@@ -17,6 +17,10 @@ type Context struct {
 	CanCreateSubtask    bool
 	CanCreateDependency bool
 	CanCreateRecurrence bool
+	InspectorVisible    bool
+	InspectorFocused    bool
+	InspectorExpanded   bool
+	InspectorPinned     bool
 }
 
 // Footer returns one logical group per line. The app wraps these lines to the
@@ -37,13 +41,31 @@ func Footer(context Context) string {
 		}
 	default:
 		navigation := "Navegar    ←/→ cambiar vista · ↑/↓ seleccionar tarea"
+		if context.InspectorVisible {
+			navigation += " · Tab/Shift+Tab cambiar panel"
+			if context.InspectorFocused {
+				navigation = "Navegar    ↑/↓ recorrer inspector · Tab/Shift+Tab volver a la vista"
+			}
+		}
 		if context.View == 2 || context.View == 3 {
 			navigation += " · PgUp/PgDn cambiar mes"
 		}
 		if context.View == 3 {
 			navigation += " · ,/. desplazar 7 días"
 		}
-		lines = append(lines, navigation+" · r recargar · q salir")
+		lines = append(lines, navigation, "Sistema    r recargar · q salir")
+		if context.InspectorVisible {
+			inspector := "Inspector  I normal/expandir/ocultar · Espacio fijar"
+			if context.InspectorPinned {
+				inspector += "/liberar"
+			}
+			if context.InspectorFocused {
+				inspector += " · Enter actuar sobre la fila enfocada"
+			} else {
+				inspector += " · Tab enfocar"
+			}
+			lines = append(lines, inspector)
+		}
 		if context.CanCreateTask {
 			lines = append(lines, "Crear      n nueva tarea")
 		}
@@ -74,8 +96,12 @@ func Footer(context Context) string {
 			if relations != "" {
 				lines = append(lines, relations)
 			}
-			if context.HasSubtask {
-				lines = append(lines, "Subtarea   J/K seleccionar · E renombrar · t completar/reabrir · {/} cambiar estado")
+			if context.HasSubtask && context.InspectorVisible {
+				subtask := "Subtarea   E renombrar · t completar/reabrir · {/} cambiar estado · Tab enfocar Inspector; ↑/↓ seleccionar"
+				if context.InspectorFocused {
+					subtask = "Subtarea   E renombrar · t completar/reabrir · {/} cambiar estado · ↑/↓ seleccionar"
+				}
+				lines = append(lines, subtask)
 			}
 		}
 		filters := "Búsqueda   / título · ? Markdown"
@@ -102,7 +128,9 @@ func Full(global bool) string {
 		mode,
 		"",
 		"Navegación",
-		"  ←/→ o h/l  cambiar vista       ↑/↓ o j/k  seleccionar",
+		"  ←/→ o h/l  cambiar vista       Tab/Shift+Tab  cambiar panel",
+		"  En Vista: ↑/↓ o j/k seleccionar tarea    En Inspector: ↑/↓ o j/k recorrer",
+		"  I normal/expandir/ocultar inspector      Espacio fijar/liberar inspector",
 		"  PgUp/PgDn  cambiar mes          F1 o Esc  cerrar ayuda       q salir",
 		"",
 		"Tarea seleccionada",
@@ -111,7 +139,7 @@ func Full(global bool) string {
 		"  d papelera   H historial",
 		"",
 		"Subtareas y dependencias",
-		"  a crear      E renombrar      J/K seleccionar      t completar/reabrir",
+		"  a crear      E renombrar      ↑/↓ con foco seleccionar      t completar/reabrir",
 		"  {/} mover estado      g agregar dependencia      G eliminar dependencia",
 		"",
 		"Búsqueda, filtros y orden",

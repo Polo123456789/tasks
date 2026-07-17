@@ -196,13 +196,15 @@ El panel de tareas relevantes omite las finalizadas, canceladas, eliminadas y pe
 - La cabecera indica siempre si se está en modo local o global y, en local, el proyecto abierto.
 - `Ctrl+P`: abrir la paleta contextual; escribir busca por nombre, descripción o sinónimos, `↑`/`↓` selecciona, `Enter` ejecuta y `Esc` cancela.
 - El pie muestra siempre todas las teclas válidas en el contexto actual y cambia con la vista, selección, formulario, selector o confirmación. `F1` abre además un mapa general opcional; `↑`/`↓` desplazan esa ayuda.
-- `←`/`→` o `h`/`l`: cambiar vista; `↑`/`↓` o `j`/`k`: seleccionar un elemento visible.
+- `←`/`→` o `h`/`l`: cambiar vista. Cada vista recuerda su tarea, ventana visible, panel y fila del inspector.
+- `Tab` / `Shift+Tab`: cambiar el foco entre la vista principal y el inspector. `↑`/`↓` o `j`/`k` recorren el panel activo; el borde, el título `ACTIVA` y la fila resaltada muestran dónde se aplicará la acción.
+- El inspector permite recorrer campos, subtareas, dependencias e historial. `Enter` ejecuta la acción natural de la fila; `I` alterna disposición normal, expandida y oculta, y `Espacio` fija o libera la disposición al cambiar de vista.
 - `PgUp` / `PgDn`: periodo anterior/siguiente en Calendario y Gantt.
 - `,` / `.`: desplazar la ventana de días del Gantt cuando el mes no cabe completo.
 - `n`, `e`, `p`, `s`, `v`: crear, editar título, prioridad, inicio y vencimiento.
 - `[` / `]`: mover entre estados; `m`: editar Markdown externamente.
 - `f`, `C`, `z`: finalizar, cancelar o reabrir directamente en el estado inicial.
-- `a`, `E`, `t`, `J`, `K`: crear, renombrar, alternar y seleccionar subtareas.
+- `a`, `E`, `t`: crear, renombrar y alternar subtareas; enfóquelas con `Tab` y recórralas con las mismas flechas usadas para las tareas (`J`/`K` se conservan como alias).
 - `{` / `}`: mover la subtarea seleccionada entre estados.
 - `g` / `G`: crear/eliminar una dependencia mediante un selector de tareas; `c`: configurar recurrencia mediante un formulario guiado.
 - `d`: papelera; `u`: restaurar; `H`: historial.

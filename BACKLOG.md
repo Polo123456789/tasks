@@ -61,7 +61,7 @@ Criterios de aceptación:
 - Los errores distinguen problemas reparables, incompatibilidades de versión y corrupción.
 - Los comandos funcionan tanto con un proyecto local como con el almacén global seleccionado explícitamente.
 
-## B-004 — Navegación con foco entre paneles
+## B-004 — Navegación con foco entre paneles — Completada
 
 Convertir la vista principal, el inspector y sus secciones en áreas navegables coherentes, sin exigir grupos distintos de teclas para tareas y subtareas.
 

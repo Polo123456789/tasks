@@ -75,8 +75,10 @@ type mutated struct {
 }
 type markdownFinished struct{ err error }
 type detailLoaded struct {
-	task domain.Task
-	err  error
+	task       domain.Task
+	history    []domain.HistoryEvent
+	err        error
+	historyErr error
 }
 type trashImpact struct {
 	task     presenter.Task
@@ -103,12 +105,45 @@ type pickerLoaded struct {
 	options []pickerOption
 	err     error
 }
+
+type panelFocus uint8
+
+const (
+	focusMain panelFocus = iota
+	focusInspector
+)
+
+type inspectorMode uint8
+
+const (
+	inspectorNormal inspectorMode = iota
+	inspectorExpanded
+	inspectorHidden
+)
+
+type viewNavigation struct {
+	initialized     bool
+	selected        int
+	selectedID      int64
+	selectedSource  string
+	inspectorCursor int
+	focus           panelFocus
+	inspectorMode   inspectorMode
+	calendarMonth   time.Time
+	ganttStartDay   int
+}
+
 type Model struct {
 	backend                       Backend
 	tasks, deleted                []presenter.Task
 	statuses                      []domain.Status
 	view, selected, width, height int
 	selectedSubtask               int
+	panelFocus                    panelFocus
+	inspectorCursor               int
+	inspectorMode                 inspectorMode
+	inspectorPinned               bool
+	viewNavigation                [6]viewNavigation
 	detail                        *domain.Task
 	confirmTrash                  *presenter.Task
 	confirmAffected               []presenter.Task
@@ -167,7 +202,9 @@ func NewAt(b Backend, view string) Model {
 		filter.IncludeCancelled = false
 	}
 	today := b.Today()
-	return Model{backend: b, view: v, loading: true, calendarMonth: today.Time(), ganttStartDay: 1, filter: filter, priorityFilter: -1, today: today, dayWatchCancel: make(chan struct{})}
+	model := Model{backend: b, view: v, loading: true, calendarMonth: today.Time(), ganttStartDay: 1, filter: filter, priorityFilter: -1, today: today, dayWatchCancel: make(chan struct{})}
+	model.viewNavigation[v] = viewNavigation{initialized: true, focus: focusMain, inspectorMode: inspectorNormal, calendarMonth: today.Time(), ganttStartDay: 1}
+	return model
 }
 func (m Model) Init() tea.Cmd { return m.load(false) }
 func (m Model) load(deleted bool) tea.Cmd {
@@ -194,7 +231,11 @@ func (m Model) loadDetail() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		detail, e := m.backend.Detail(ctx, task.Source, task.ID)
-		return detailLoaded{task: detail, err: e}
+		if e != nil {
+			return detailLoaded{task: detail, err: e}
+		}
+		history, historyErr := m.backend.History(ctx, task.Source, task.ID)
+		return detailLoaded{task: detail, history: history, historyErr: historyErr}
 	}
 }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -288,11 +329,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.selected < len(m.tasks) && m.tasks[m.selected].ID == v.task.ID && m.tasks[m.selected].Source == v.task.Origin.Key {
 			m.detail = &v.task
+			m.history = v.history
+			if v.historyErr != nil {
+				m.notice = "No se pudo cargar el historial del inspector: " + v.historyErr.Error()
+			}
 			if len(v.task.Subtasks) == 0 {
 				m.selectedSubtask = 0
 			} else if m.selectedSubtask >= len(v.task.Subtasks) {
 				m.selectedSubtask = len(v.task.Subtasks) - 1
 			}
+			m.clampInspectorCursor()
 		}
 		if !m.dayWatchStarted {
 			m.dayWatchStarted = true
@@ -373,7 +419,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if v.String() == "H" || v.String() == "esc" {
 				m.historyOpen = false
-				m.history = nil
 			}
 			return m, nil
 		}
@@ -404,19 +449,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			m.cancelDayWatch()
 			return m, tea.Quit
+		case "tab", "shift+tab":
+			if m.hasSelectedTask() {
+				if m.inspectorMode == inspectorHidden {
+					m.inspectorMode = inspectorNormal
+				}
+				if m.panelFocus == focusMain {
+					m.panelFocus = focusInspector
+				} else {
+					if m.inspectorMode == inspectorExpanded {
+						m.inspectorMode = inspectorNormal
+					}
+					m.panelFocus = focusMain
+				}
+				m.saveViewNavigation()
+			}
+			return m, nil
+		case "I":
+			if m.hasSelectedTask() {
+				switch m.inspectorMode {
+				case inspectorNormal:
+					m.inspectorMode = inspectorExpanded
+					m.panelFocus = focusInspector
+				case inspectorExpanded:
+					m.inspectorMode = inspectorHidden
+					m.panelFocus = focusMain
+				default:
+					m.inspectorMode = inspectorNormal
+				}
+				m.saveViewNavigation()
+			}
+			return m, nil
+		case " ":
+			if m.hasSelectedTask() && m.inspectorMode != inspectorHidden {
+				m.inspectorPinned = !m.inspectorPinned
+			}
+			return m, nil
 		case "right", "l":
-			m.view = m.nextView(1)
-			m.selected = 0
-			m.ensureVisibleSelection()
-			m.selectedSubtask = 0
-			m.detail = nil
+			m.changeView(1)
 			refreshDetail = true
 		case "left", "h":
-			m.view = m.nextView(-1)
-			m.selected = 0
-			m.ensureVisibleSelection()
-			m.selectedSubtask = 0
-			m.detail = nil
+			m.changeView(-1)
 			refreshDetail = true
 		case "pgup":
 			if m.view == 2 || m.view == 3 {
@@ -445,24 +518,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ganttStartDay = max(1, min(31, m.ganttStartDay+direction))
 			}
 		case "down", "j":
+			if m.panelFocus == focusInspector && m.inspectorMode != inspectorHidden {
+				if m.detail != nil {
+					m.moveInspectorCursor(1)
+				}
+				return m, nil
+			}
 			if m.moveSelection(1) {
-				m.selectedSubtask = 0
 				m.detail = nil
+				m.history = nil
+				m.saveViewNavigation()
 				return m, m.loadDetail()
 			}
 		case "up", "k":
+			if m.panelFocus == focusInspector && m.inspectorMode != inspectorHidden {
+				if m.detail != nil {
+					m.moveInspectorCursor(-1)
+				}
+				return m, nil
+			}
 			if m.moveSelection(-1) {
-				m.selectedSubtask = 0
 				m.detail = nil
+				m.history = nil
+				m.saveViewNavigation()
 				return m, m.loadDetail()
 			}
 		case "J":
-			if m.detail != nil && m.selectedSubtask < len(m.detail.Subtasks)-1 {
-				m.selectedSubtask++
-			}
+			m.focusAdjacentSubtask(1)
 		case "K":
-			if m.selectedSubtask > 0 {
-				m.selectedSubtask--
+			m.focusAdjacentSubtask(-1)
+		case "enter":
+			if m.panelFocus == focusInspector && m.inspectorMode != inspectorHidden {
+				return m.activateInspectorRow()
 			}
 		case "r":
 			m.loading = true
@@ -589,13 +676,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = "No se pueden añadir subtareas a una tarea de proyecto desde global"
 			}
 		case "E":
-			if m.detail != nil && m.selectedSubtask < len(m.detail.Subtasks) {
+			if _, ok := m.focusedSubtask(); ok {
 				m.inputMode = true
 				m.inputAction = "rename-subtask"
 				m.input = m.detail.Subtasks[m.selectedSubtask].Title
 			}
 		case "t":
-			if m.detail != nil && m.selectedSubtask < len(m.detail.Subtasks) && m.selected < len(m.tasks) {
+			if _, ok := m.focusedSubtask(); ok && m.selected < len(m.tasks) {
 				task := m.tasks[m.selected]
 				subtaskID := m.detail.Subtasks[m.selectedSubtask].ID
 				return m, func() tea.Msg {
@@ -606,7 +693,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "{", "}":
-			if m.detail != nil && m.selectedSubtask < len(m.detail.Subtasks) && m.selected < len(m.tasks) {
+			if _, ok := m.focusedSubtask(); ok && m.selected < len(m.tasks) {
 				direction := 1
 				if v.String() == "{" {
 					direction = -1
@@ -628,6 +715,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "G":
 			if m.hasSelectedTask() {
+				if row, ok := m.focusedInspectorRow(); ok && row.Kind == taskdetail.RowDependency {
+					task := m.tasks[m.selected]
+					m.loading = true
+					return m, func() tea.Msg {
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						return mutated{action: "Dependencia eliminada", err: m.backend.RemoveDependency(ctx, task.Source, task.ID, row.ID, task.Version)}
+					}
+				}
 				return m, m.loadDependencyPicker("remove-dependency", true)
 			}
 		case "c":
@@ -1172,6 +1268,181 @@ func (m Model) nextView(direction int) int {
 		}
 	}
 }
+
+func (m *Model) saveViewNavigation() {
+	state := viewNavigation{
+		initialized:     true,
+		selected:        m.selected,
+		inspectorCursor: m.inspectorCursor,
+		focus:           m.panelFocus,
+		inspectorMode:   m.inspectorMode,
+		calendarMonth:   m.calendarMonth,
+		ganttStartDay:   m.ganttStartDay,
+	}
+	if m.hasSelectedTask() {
+		state.selectedID = m.tasks[m.selected].ID
+		state.selectedSource = m.tasks[m.selected].Source
+	}
+	m.viewNavigation[m.view] = state
+}
+
+func (m *Model) restoreViewNavigation() {
+	state := m.viewNavigation[m.view]
+	if !state.initialized {
+		state = viewNavigation{initialized: true, focus: focusMain, inspectorMode: inspectorNormal, calendarMonth: m.today.Time(), ganttStartDay: 1}
+	}
+	m.selected = state.selected
+	if state.selectedID != 0 {
+		for index, task := range m.tasks {
+			if task.ID == state.selectedID && task.Source == state.selectedSource {
+				m.selected = index
+				break
+			}
+		}
+	}
+	m.ensureVisibleSelection()
+	m.inspectorCursor = state.inspectorCursor
+	m.panelFocus = state.focus
+	if !m.inspectorPinned {
+		m.inspectorMode = state.inspectorMode
+	}
+	if !state.calendarMonth.IsZero() {
+		m.calendarMonth = state.calendarMonth
+	} else {
+		m.calendarMonth = m.today.Time()
+	}
+	m.ganttStartDay = state.ganttStartDay
+	if m.ganttStartDay < 1 {
+		m.ganttStartDay = 1
+	}
+	if m.inspectorMode == inspectorHidden {
+		m.panelFocus = focusMain
+	} else if m.inspectorMode == inspectorExpanded {
+		m.panelFocus = focusInspector
+	}
+}
+
+func (m *Model) changeView(direction int) {
+	m.saveViewNavigation()
+	m.view = m.nextView(direction)
+	m.restoreViewNavigation()
+	m.detail = nil
+	m.history = nil
+	m.selectedSubtask = 0
+}
+
+func (m Model) inspectorRows() []taskdetail.Row {
+	if m.detail == nil {
+		return nil
+	}
+	task := presenter.Tasks([]domain.Task{*m.detail})[0]
+	return taskdetail.Rows(task, m.history)
+}
+
+func (m *Model) clampInspectorCursor() {
+	rows := m.inspectorRows()
+	if len(rows) == 0 {
+		m.inspectorCursor = 0
+		return
+	}
+	m.inspectorCursor = max(0, min(m.inspectorCursor, len(rows)-1))
+	m.syncInspectorSelection()
+}
+
+func (m *Model) syncInspectorSelection() {
+	rows := m.inspectorRows()
+	if m.inspectorCursor >= 0 && m.inspectorCursor < len(rows) && rows[m.inspectorCursor].Kind == taskdetail.RowSubtask {
+		m.selectedSubtask = rows[m.inspectorCursor].Index
+	}
+}
+
+func (m *Model) moveInspectorCursor(direction int) bool {
+	rows := m.inspectorRows()
+	target := m.inspectorCursor + direction
+	if target < 0 || target >= len(rows) {
+		return false
+	}
+	m.inspectorCursor = target
+	m.syncInspectorSelection()
+	m.saveViewNavigation()
+	return true
+}
+
+func (m *Model) focusAdjacentSubtask(direction int) {
+	rows := m.inspectorRows()
+	if len(rows) == 0 || m.inspectorMode == inspectorHidden {
+		return
+	}
+	positions := make([]int, 0)
+	current := -1
+	for position, row := range rows {
+		if row.Kind != taskdetail.RowSubtask {
+			continue
+		}
+		if row.Index == m.selectedSubtask {
+			current = len(positions)
+		}
+		positions = append(positions, position)
+	}
+	if len(positions) == 0 {
+		return
+	}
+	if current < 0 {
+		current = 0
+		if direction < 0 {
+			current = len(positions) - 1
+		}
+	} else {
+		current = max(0, min(current+direction, len(positions)-1))
+	}
+	m.panelFocus = focusInspector
+	m.inspectorCursor = positions[current]
+	m.syncInspectorSelection()
+	m.saveViewNavigation()
+}
+
+func (m Model) focusedInspectorRow() (taskdetail.Row, bool) {
+	rows := m.inspectorRows()
+	if m.panelFocus != focusInspector || m.inspectorMode == inspectorHidden || m.inspectorCursor < 0 || m.inspectorCursor >= len(rows) {
+		return taskdetail.Row{}, false
+	}
+	return rows[m.inspectorCursor], true
+}
+
+func (m Model) focusedSubtask() (domain.Subtask, bool) {
+	row, ok := m.focusedInspectorRow()
+	if !ok || row.Kind != taskdetail.RowSubtask || m.detail == nil || row.Index < 0 || row.Index >= len(m.detail.Subtasks) {
+		return domain.Subtask{}, false
+	}
+	return m.detail.Subtasks[row.Index], true
+}
+
+func (m Model) activateInspectorRow() (tea.Model, tea.Cmd) {
+	row, ok := m.focusedInspectorRow()
+	if !ok {
+		return m, nil
+	}
+	key := ""
+	switch row.Kind {
+	case taskdetail.RowField:
+		key = map[string]string{
+			"title": "e", "status": "]", "priority": "p", "start": "s",
+			"due": "v", "recurrence": "c", "markdown": "m",
+		}[row.Field]
+	case taskdetail.RowSubtask:
+		key = "t"
+	case taskdetail.RowDependency:
+		key = "G"
+	case taskdetail.RowHistory:
+		m.historyOpen = true
+		return m, nil
+	}
+	if key == "" {
+		return m, nil
+	}
+	return m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+}
+
 func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
@@ -1347,26 +1618,35 @@ func (m Model) View() string {
 	} else {
 		mainHeight := availableHeight
 		detailHeight := 0
-		if m.hasSelectedTask() {
+		showInspector := m.hasSelectedTask() && m.inspectorMode != inspectorHidden
+		if showInspector && m.inspectorMode == inspectorExpanded {
+			mainHeight = 0
+			detailHeight = availableHeight
+		} else if showInspector {
 			detailHeight = min(10, max(8, availableHeight/4))
 			mainHeight = max(3, availableHeight-detailHeight-1)
 			detailHeight = max(3, availableHeight-mainHeight-1)
 		}
-		switch m.view {
-		case 0:
-			body = kanban.View(m.tasks, m.statuses, m.selected, m.width, mainHeight)
-		case 1:
-			body = table.View(m.tasks, m.selected, m.width, mainHeight, m.backend.Mode() == domain.ModeGlobal)
-		case 2:
-			body = calendar.View(m.tasks, m.calendarMonth, m.selected, m.width, mainHeight)
-		case 3:
-			body = gantt.View(m.tasks, m.calendarMonth, m.selected, m.width, mainHeight, m.ganttStartDay)
-		case 4:
-			body = trash.View(m.deleted, m.selected, availableHeight)
-		case 5:
-			body = settings.View(m.statuses, m.selected, availableHeight)
+		if mainHeight > 0 {
+			contentWidth := max(20, m.width-4)
+			contentHeight := max(1, mainHeight-3)
+			switch m.view {
+			case 0:
+				body = kanban.View(m.tasks, m.statuses, m.selected, contentWidth, contentHeight)
+			case 1:
+				body = table.View(m.tasks, m.selected, contentWidth, contentHeight, m.backend.Mode() == domain.ModeGlobal)
+			case 2:
+				body = calendar.View(m.tasks, m.calendarMonth, m.selected, contentWidth, contentHeight)
+			case 3:
+				body = gantt.View(m.tasks, m.calendarMonth, m.selected, contentWidth, contentHeight, m.ganttStartDay)
+			case 4:
+				body = trash.View(m.deleted, m.selected, contentHeight)
+			case 5:
+				body = settings.View(m.statuses, m.selected, contentHeight)
+			}
+			body = panelView("Vista principal", body, m.panelFocus == focusMain || !showInspector, m.width)
 		}
-		if m.hasSelectedTask() {
+		if showInspector {
 			detail := m.tasks[m.selected]
 			if m.detail != nil && m.detail.ID == detail.ID && m.detail.Origin.Key == detail.Source {
 				detail = presenter.Tasks([]domain.Task{*m.detail})[0]
@@ -1377,7 +1657,12 @@ func (m Model) View() string {
 					break
 				}
 			}
-			body = lipgloss.JoinVertical(lipgloss.Left, body, "", taskdetail.View(detail, m.selectedSubtask, m.width, detailHeight))
+			inspector := taskdetail.InspectorView(detail, m.history, m.inspectorCursor, m.width, detailHeight, m.panelFocus == focusInspector, m.inspectorMode == inspectorExpanded, m.inspectorPinned)
+			if mainHeight == 0 {
+				body = inspector
+			} else {
+				body = lipgloss.JoinVertical(lipgloss.Left, body, "", inspector)
+			}
 		}
 		if m.historyOpen {
 			body = historyscreen.View(m.history, availableHeight)
@@ -1391,6 +1676,17 @@ func (m Model) View() string {
 		body = m.pickerView(availableHeight)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", theme.Help.Render(footer))
+}
+
+func panelView(title, content string, active bool, width int) string {
+	if active {
+		title += " · ACTIVA"
+	}
+	style := theme.Border
+	if active {
+		style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.Primary).Padding(0, 1)
+	}
+	return style.Width(max(18, width-2)).Render(theme.Title.Render(title) + "\n" + content)
 }
 
 func (m Model) footerContent() string {
@@ -1423,11 +1719,15 @@ func (m Model) footerContent() string {
 
 	contextCapabilities := m.backend.Capabilities("")
 	context := keymap.Context{
-		View:          m.view,
-		Global:        m.backend.Mode() == domain.ModeGlobal,
-		HasTask:       m.hasSelectedTask(),
-		HasSubtask:    m.detail != nil && len(m.detail.Subtasks) > 0,
-		CanCreateTask: contextCapabilities.CanCreateTask,
+		View:              m.view,
+		Global:            m.backend.Mode() == domain.ModeGlobal,
+		HasTask:           m.hasSelectedTask(),
+		HasSubtask:        m.detail != nil && len(m.detail.Subtasks) > 0,
+		CanCreateTask:     contextCapabilities.CanCreateTask,
+		InspectorVisible:  m.hasSelectedTask() && m.inspectorMode != inspectorHidden,
+		InspectorFocused:  m.panelFocus == focusInspector && m.inspectorMode != inspectorHidden,
+		InspectorExpanded: m.inspectorMode == inspectorExpanded,
+		InspectorPinned:   m.inspectorPinned,
 	}
 	if context.HasTask {
 		taskCapabilities := m.backend.Capabilities(m.tasks[m.selected].Source)

@@ -4,12 +4,147 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Polo123456789/tasks/internal/domain"
 	"github.com/Polo123456789/tasks/internal/tui/presenter"
 	"github.com/Polo123456789/tasks/internal/tui/screens/listutil"
 	"github.com/Polo123456789/tasks/internal/tui/theme"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
+
+type RowKind string
+
+const (
+	RowField      RowKind = "field"
+	RowSubtask    RowKind = "subtask"
+	RowDependency RowKind = "dependency"
+	RowHistory    RowKind = "history"
+)
+
+type Row struct {
+	Kind  RowKind
+	Field string
+	Index int
+	ID    int64
+	Label string
+	Value string
+}
+
+func Rows(task presenter.Task, history []domain.HistoryEvent) []Row {
+	field := func(key, label, value string) Row {
+		if strings.TrimSpace(value) == "" {
+			value = "—"
+		}
+		return Row{Kind: RowField, Field: key, Label: label, Value: value}
+	}
+	rows := []Row{
+		field("title", "Título", task.Title),
+		field("status", "Estado", task.Status),
+		field("priority", "Prioridad", task.Priority),
+		field("start", "Inicio", task.Start),
+		field("due", "Vencimiento", task.Due),
+		field("recurrence", "Recurrencia", task.Recurrence),
+		field("markdown", "Markdown", firstContentLine(task.Markdown)),
+	}
+	for index, subtask := range task.Subtasks {
+		mark := "○"
+		if subtask.Done {
+			mark = "✓"
+		}
+		rows = append(rows, Row{Kind: RowSubtask, Index: index, ID: subtask.ID, Label: "Subtarea", Value: fmt.Sprintf("%s %s [%s]", mark, subtask.Title, subtask.Status)})
+	}
+	for index, id := range task.DependencyIDs {
+		rows = append(rows, Row{Kind: RowDependency, Index: index, ID: id, Label: "Dependencia", Value: fmt.Sprintf("#%d", id)})
+	}
+	for index := len(history) - 1; index >= 0; index-- {
+		event := history[index]
+		value := historyEventName(event.Kind)
+		if event.Detail != "" {
+			value += " · " + event.Detail
+		}
+		rows = append(rows, Row{Kind: RowHistory, Index: index, ID: event.ID, Label: "Historial", Value: event.CreatedAt.Local().Format("2006-01-02 15:04") + " · " + value})
+	}
+	return rows
+}
+
+func historyEventName(kind string) string {
+	names := map[string]string{
+		"created": "creada", "updated": "editada", "title_changed": "título cambiado",
+		"status_changed": "estado cambiado", "priority_changed": "prioridad cambiada",
+		"completed": "finalizada", "cancelled": "cancelada", "reopened": "reabierta",
+		"subtask_added": "subtarea creada", "subtask_updated": "subtarea actualizada",
+		"dependency_added": "dependencia creada", "dependency_removed": "dependencia eliminada",
+		"trashed": "enviada a papelera", "restored": "restaurada", "recurrence_reset": "recurrencia reiniciada",
+	}
+	if name, ok := names[kind]; ok {
+		return name
+	}
+	return kind
+}
+
+func firstContentLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func InspectorView(task presenter.Task, history []domain.HistoryEvent, selected, width, height int, active, expanded, pinned bool) string {
+	width = max(20, width)
+	height = max(3, height)
+	rows := Rows(task, history)
+	if len(rows) == 0 {
+		selected = 0
+	} else {
+		selected = max(0, min(selected, len(rows)-1))
+	}
+	title := "Inspector"
+	if active {
+		title += " · ACTIVO"
+	}
+	if expanded {
+		title += " · EXPANDIDO"
+	}
+	if pinned {
+		title += " · FIJADO"
+	}
+	titleLine := title + " · " + truncate(task.Title, max(1, width-len(title)-10))
+	if task.SubtasksTotal > 0 {
+		titleLine += fmt.Sprintf(" · subtareas %d/%d", task.SubtasksDone, task.SubtasksTotal)
+	}
+	lines := []string{theme.Title.Render(truncate(titleLine, max(1, width-6)))}
+	capacity := max(1, height-3)
+	start, end := listutil.Bounds(len(rows), selected, capacity)
+	if start > 0 && capacity > 1 {
+		lines = append(lines, theme.Help.Render(fmt.Sprintf("↑ %d elemento(s) anterior(es)", start)))
+		capacity--
+		start, end = listutil.Bounds(len(rows), selected, capacity)
+	}
+	for index := start; index < end && len(lines) < height-2; index++ {
+		row := rows[index]
+		label := fmt.Sprintf("%-11s %s", row.Label, row.Value)
+		label = truncate(label, max(1, width-6))
+		prefix := "  "
+		if index == selected {
+			prefix = "› "
+			if active {
+				lines = append(lines, theme.Selected.Render(prefix+label))
+				continue
+			}
+		}
+		lines = append(lines, prefix+label)
+	}
+	if end < len(rows) && len(lines) < height-2 {
+		lines = append(lines, theme.Help.Render(fmt.Sprintf("↓ %d elemento(s) más", len(rows)-end)))
+	}
+	style := theme.Border
+	if active {
+		style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.Primary).Padding(0, 1)
+	}
+	return style.Width(width - 2).Render(strings.Join(lines, "\n"))
+}
 
 func View(task presenter.Task, selectedSubtask, width, height int) string {
 	width = max(20, width)
