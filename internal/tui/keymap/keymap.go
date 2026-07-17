@@ -154,6 +154,7 @@ func Full(global bool) string {
 		"",
 		"Otras acciones",
 		"  U deshacer        c recurrencia     u restaurar     r recargar     ,/. desplazar Gantt",
+		"  En formularios de fecha: Ctrl+O abrir calendario visual",
 		"  Estados: a crear, e renombrar, i inicial, [/] ordenar, d eliminar",
 		"  Ctrl+P abrir paleta contextual de comandos",
 	}

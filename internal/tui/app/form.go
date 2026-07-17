@@ -429,6 +429,10 @@ func (m Model) updateTaskForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key.String() {
+	case "ctrl+o":
+		if m.openFormDatePicker() {
+			return m, nil
+		}
 	case "esc":
 		if m.form.dirty() {
 			m.form.confirmDiscard = true

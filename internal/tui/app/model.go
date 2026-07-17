@@ -195,6 +195,7 @@ type Model struct {
 	conflict                      *conflictState
 	nextConflictRequestID         uint64
 	refreshErr                    error
+	datePicker                    datePickerState
 }
 
 func New(b Backend) Model {
@@ -332,6 +333,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = v.err
 		if v.err == nil {
 			m.today = v.today
+			if m.datePicker.open {
+				m.datePicker.today = v.today
+			}
 			m.calendarMonth = v.today.Time()
 			m.notice = "Mantenimiento diario completado"
 			return m, tea.Batch(m.load(m.view == 4), m.waitForDayCheck())
@@ -538,6 +542,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Type == tea.KeyCtrlC {
 			m.cancelDayWatch()
 			return m, tea.Quit
+		}
+		if m.datePicker.open {
+			return m.updateDatePicker(v)
 		}
 		if m.form.open {
 			return m.updateTaskForm(v)
@@ -1649,6 +1656,10 @@ func (m Model) activateInspectorRow() (tea.Model, tea.Cmd) {
 
 func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
+	case "ctrl+o":
+		if m.openFilterDatePicker() {
+			return m, nil
+		}
 	case "esc":
 		m.inputMode = false
 	case "enter":
@@ -1877,7 +1888,9 @@ func (m Model) View() string {
 	if m.loading && m.loadedOnce {
 		header += "  " + theme.Help.Render("⟳ Actualizando…")
 	}
-	if m.paletteOpen {
+	if m.datePicker.open {
+		body = m.datePicker.view(m.width, availableHeight)
+	} else if m.paletteOpen {
 		body = m.paletteView(availableHeight)
 	} else if m.helpOpen {
 		body = theme.Border.Render(m.helpView(availableHeight))
@@ -1899,6 +1912,9 @@ func panelView(title, content string, active bool, width int) string {
 }
 
 func (m Model) footerContent() string {
+	if m.datePicker.open {
+		return "CALENDARIO ←/→/↑/↓ día · PgUp/PgDn semana · [/] mes · Home hoy\nFECHA      Enter elegir · x limpiar · Esc cancelar sin cambios"
+	}
 	if m.form.open {
 		if m.form.loadFailed {
 			return "FORMULARIO No se pudieron cargar datos seguros para guardar · Esc cerrar"
@@ -1919,7 +1935,11 @@ func (m Model) footerContent() string {
 		if m.form.compact {
 			return "CAPTURA    Enter/Ctrl+S crear · Esc cancelar\nTEXTO     ←/→ cursor · Ctrl+←/→ palabra · Ctrl+W borrar palabra · Ctrl+U/K borrar línea · pegado admitido"
 		}
-		return "FORMULARIO Tab/Shift+Tab campo · ↑/↓ campo · ←/→ selector · Enter/Ctrl+S guardar · Esc cancelar\nTEXTO     ←/→ cursor · Ctrl+←/→ palabra · Ctrl+W borrar palabra · Ctrl+U/K borrar línea · pegado admitido"
+		formKeys := "FORMULARIO Tab/Shift+Tab campo · ↑/↓ campo · ←/→ selector · Enter/Ctrl+S guardar · Esc cancelar"
+		if m.form.field == formStart || m.form.field == formDue {
+			formKeys += " · Ctrl+O abrir calendario"
+		}
+		return formKeys + "\nTEXTO     ←/→ cursor · Ctrl+←/→ palabra · Ctrl+W borrar palabra · Ctrl+U/K borrar línea · pegado admitido"
 	}
 	if m.paletteOpen {
 		return "PALETA    Escribir para buscar · ↑/↓ elegir · Enter ejecutar · Esc cancelar"
@@ -1946,6 +1966,9 @@ func (m Model) footerContent() string {
 	}
 	if m.inputMode {
 		footer := fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
+		if m.inputAction == "filter-dates" {
+			footer += " · Ctrl+O elegir rango con calendario"
+		}
 		if feedback := m.feedbackLine(); feedback != "" {
 			footer = feedback + "\n" + footer
 		}

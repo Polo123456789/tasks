@@ -125,7 +125,7 @@ Criterios de aceptación:
 - Los borradores se conservan tras errores recuperables y conflictos.
 - El usuario recibe confirmación inequívoca del resultado de cada mutación.
 
-## B-007 — Selector de fechas mediante calendario
+## B-007 — Selector de fechas mediante calendario — Completada
 
 Permitir elegir fechas visualmente sin exigir que el usuario escriba siempre `AAAA-MM-DD`.
 
