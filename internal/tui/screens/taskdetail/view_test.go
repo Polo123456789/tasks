@@ -33,13 +33,29 @@ func TestInspectorRowsCoverFieldsSubtasksDependenciesAndHistory(t *testing.T) {
 	}
 	history := []domain.HistoryEvent{{ID: 3, Kind: "created", Detail: "imported", CreatedAt: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}}
 	rows := Rows(task, history)
-	if len(rows) != 10 || rows[0].Field != "title" || rows[7].Kind != RowSubtask || rows[8].Kind != RowDependency || rows[9].Kind != RowHistory {
+	if len(rows) != 10 || rows[0].Kind != RowSubtask || rows[1].Field != "title" || rows[8].Kind != RowDependency || rows[9].Kind != RowHistory {
 		t.Fatalf("rows=%#v", rows)
 	}
 	view := InspectorView(task, history, 9, 60, 12, true, true, true)
 	for _, expected := range []string{"Inspector · ACTIVO · EXPANDIDO · FIJADO", "Historial", "creada · imported"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("inspector missing %q:\n%s", expected, view)
+		}
+	}
+}
+
+func TestCompactInspectorShowsSubtasksBeforeTaskFields(t *testing.T) {
+	task := presenter.Task{
+		Title: "Parent",
+		Subtasks: []presenter.Subtask{
+			{Title: "First child", Status: "Pending"},
+			{Title: "Second child", Status: "Pending"},
+		},
+	}
+	view := InspectorView(task, nil, 0, 80, 8, false, false, false)
+	for _, expected := range []string{"First child", "Second child"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("compact inspector hides %q:\n%s", expected, view)
 		}
 	}
 }

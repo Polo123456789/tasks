@@ -37,15 +37,10 @@ func Rows(task presenter.Task, history []domain.HistoryEvent) []Row {
 		}
 		return Row{Kind: RowField, Field: key, Label: label, Value: value}
 	}
-	rows := []Row{
-		field("title", "Título", task.Title),
-		field("status", "Estado", task.Status),
-		field("priority", "Prioridad", task.Priority),
-		field("start", "Inicio", task.Start),
-		field("due", "Vencimiento", task.Due),
-		field("recurrence", "Recurrencia", task.Recurrence),
-		field("markdown", "Markdown", firstContentLine(task.Markdown)),
-	}
+	// Subtasks lead the inspector so the compact preview remains useful. The
+	// inspector is deliberately short in normal mode; putting task fields first
+	// made every subtask fall below the fold until the panel was expanded.
+	rows := make([]Row, 0, len(task.Subtasks)+len(task.DependencyIDs)+len(history)+7)
 	for index, subtask := range task.Subtasks {
 		mark := "○"
 		if subtask.Done {
@@ -53,6 +48,15 @@ func Rows(task presenter.Task, history []domain.HistoryEvent) []Row {
 		}
 		rows = append(rows, Row{Kind: RowSubtask, Index: index, ID: subtask.ID, Label: "Subtarea", Value: fmt.Sprintf("%s %s [%s]", mark, subtask.Title, subtask.Status)})
 	}
+	rows = append(rows,
+		field("title", "Título", task.Title),
+		field("status", "Estado", task.Status),
+		field("priority", "Prioridad", task.Priority),
+		field("start", "Inicio", task.Start),
+		field("due", "Vencimiento", task.Due),
+		field("recurrence", "Recurrencia", task.Recurrence),
+		field("markdown", "Markdown", firstContentLine(task.Markdown)),
+	)
 	for index, id := range task.DependencyIDs {
 		rows = append(rows, Row{Kind: RowDependency, Index: index, ID: id, Label: "Dependencia", Value: fmt.Sprintf("#%d", id)})
 	}

@@ -1172,14 +1172,12 @@ func TestPanelFocusNavigatesInspectorRowsAndScopesNestedActions(t *testing.T) {
 	if command != nil || backend.toggleSubCalls != 0 {
 		t.Fatal("inactive inspector accepted a subtask action")
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// J/K are the direct path from the task preview into its subtasks: no
+	// inspector expansion or field-by-field traversal is required.
+	updated, _ = model.Update(key("J"))
 	model = updated.(Model)
 	if model.panelFocus != focusInspector || model.selected != 0 {
 		t.Fatalf("focus=%v selected=%d", model.panelFocus, model.selected)
-	}
-	for range 7 {
-		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
-		model = updated.(Model)
 	}
 	row, ok := model.focusedInspectorRow()
 	if !ok || row.Kind != taskdetail.RowSubtask || model.selectedSubtask != 0 {
@@ -1194,8 +1192,10 @@ func TestPanelFocusNavigatesInspectorRowsAndScopesNestedActions(t *testing.T) {
 	if backend.toggleSubCalls != 1 {
 		t.Fatalf("toggle calls=%d", backend.toggleSubCalls)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	model = updated.(Model)
+	for range 8 {
+		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(Model)
+	}
 	row, _ = model.focusedInspectorRow()
 	if row.Kind != taskdetail.RowDependency || row.ID != 42 {
 		t.Fatalf("dependency row=%#v", row)

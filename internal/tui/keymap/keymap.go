@@ -101,7 +101,7 @@ func Footer(context Context) string {
 				lines = append(lines, relations)
 			}
 			if context.HasSubtask && context.InspectorVisible {
-				subtask := "Subtarea   E renombrar · t completar/reabrir · {/} cambiar estado · Tab enfocar Inspector; ↑/↓ seleccionar"
+				subtask := "Subtarea   J/K enfocar · E renombrar · t completar/reabrir · {/} cambiar estado"
 				if context.InspectorFocused {
 					subtask = "Subtarea   E renombrar · t completar/reabrir · {/} cambiar estado · ↑/↓ seleccionar"
 				}
