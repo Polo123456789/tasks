@@ -157,6 +157,98 @@ func TestFormCalendarExplainsInvalidRangeBeforeChangingDraft(t *testing.T) {
 	}
 }
 
+func TestQuickDateEditorsOpenCalendarAndKeepValidationBeforeSaving(t *testing.T) {
+	today := mustDate(t, "2026-07-15")
+	start := mustDate(t, "2026-07-10")
+	due := mustDate(t, "2026-07-20")
+
+	tests := []struct {
+		shortcut      string
+		target        datePickerTarget
+		persisted     string
+		invalid       string
+		valid         string
+		errorFragment string
+	}{
+		{shortcut: "s", target: dateInputStart, persisted: "2026-07-10", invalid: "2026-07-21", valid: "2026-07-12", errorFragment: "posterior al vencimiento"},
+		{shortcut: "v", target: dateInputDue, persisted: "2026-07-20", invalid: "2026-07-09", valid: "2026-07-22", errorFragment: "anterior al inicio"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.shortcut, func(t *testing.T) {
+			backend := &fakeBackend{mode: domain.ModeLocal, today: today, tasks: []domain.Task{{
+				ID: 1, Title: "Editar fechas", Start: &start, Due: &due, Version: 3,
+			}}}
+			model := NewAt(backend, "table")
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			model = updated.(Model)
+			updated, _ = model.Update(loaded{tasks: backend.tasks})
+			model = updated.(Model)
+			updated, _ = model.Update(key(test.shortcut))
+			model = updated.(Model)
+			if !model.inputMode || model.input != test.persisted || !strings.Contains(model.View(), "Ctrl+O elegir fecha con calendario") {
+				t.Fatalf("quick editor was not ready: input=%q\n%s", model.input, model.View())
+			}
+
+			updated, _ = model.Update(key("ctrl+o"))
+			model = updated.(Model)
+			if !model.datePicker.open || model.datePicker.target != test.target || model.datePicker.current == nil || model.datePicker.current.String() != test.persisted {
+				t.Fatalf("quick picker=%#v", model.datePicker)
+			}
+			model.datePicker.focused = mustDate(t, test.invalid)
+			updated, _ = model.Update(key("enter"))
+			model = updated.(Model)
+			if !model.datePicker.open || !strings.Contains(model.datePicker.error, test.errorFragment) || model.input != test.persisted {
+				t.Fatalf("invalid selection changed draft: input=%q picker=%#v", model.input, model.datePicker)
+			}
+
+			model.datePicker.focused = mustDate(t, test.valid)
+			updated, _ = model.Update(key("enter"))
+			model = updated.(Model)
+			if model.datePicker.open || !model.inputMode || model.input != test.valid || backend.dateCalls != 0 {
+				t.Fatalf("selection was not returned to draft: input=%q calls=%d picker=%#v", model.input, backend.dateCalls, model.datePicker)
+			}
+			updated, command := model.Update(key("enter"))
+			model = updated.(Model)
+			if command == nil {
+				t.Fatal("chosen date did not produce a save command")
+			}
+			_ = command()
+			if backend.dateCalls != 1 {
+				t.Fatalf("date saves=%d, want 1", backend.dateCalls)
+			}
+		})
+	}
+}
+
+func TestQuickDateCalendarCancelAndClearPreserveNestedEditor(t *testing.T) {
+	today := mustDate(t, "2026-07-15")
+	start := mustDate(t, "2026-07-10")
+	backend := &fakeBackend{mode: domain.ModeLocal, today: today, tasks: []domain.Task{{ID: 1, Title: "Editar", Start: &start}}}
+	model := NewAt(backend, "table")
+	updated, _ := model.Update(loaded{tasks: backend.tasks})
+	model = updated.(Model)
+	updated, _ = model.Update(key("s"))
+	model = updated.(Model)
+	model.input = "2026-07-11"
+	updated, _ = model.Update(key("ctrl+o"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("right"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("esc"))
+	model = updated.(Model)
+	if model.datePicker.open || !model.inputMode || model.input != "2026-07-11" {
+		t.Fatalf("cancel did not preserve quick draft: input=%q picker=%#v", model.input, model.datePicker)
+	}
+	updated, _ = model.Update(key("ctrl+o"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("x"))
+	model = updated.(Model)
+	if model.datePicker.open || !model.inputMode || model.input != "" {
+		t.Fatalf("clear did not return an empty quick draft: input=%q picker=%#v", model.input, model.datePicker)
+	}
+}
+
 func TestFilterCalendarBuildsRangeDraftBeforeApplyingFilter(t *testing.T) {
 	today := mustDate(t, "2026-07-15")
 	backend := &fakeBackend{mode: domain.ModeLocal, today: today}

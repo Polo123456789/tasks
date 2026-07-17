@@ -16,6 +16,8 @@ type datePickerTarget uint8
 const (
 	dateFormStart datePickerTarget = iota
 	dateFormDue
+	dateInputStart
+	dateInputDue
 	dateFilterFrom
 	dateFilterTo
 )
@@ -69,6 +71,23 @@ func (m *Model) openFormDatePicker() bool {
 	}
 	fallback := pickerFocus(current, m.today)
 	m.datePicker = datePickerState{open: true, target: target, focused: pickerFocus(draft, fallback), current: current, today: m.today}
+	return true
+}
+
+func (m *Model) openInputDatePicker() bool {
+	if !m.inputMode || (m.inputAction != "start" && m.inputAction != "due") || !m.hasSelectedTask() {
+		return false
+	}
+	target := dateInputStart
+	current := parsedOptionalDate(m.tasks[m.selected].Start)
+	if m.inputAction == "due" {
+		target = dateInputDue
+		current = parsedOptionalDate(m.tasks[m.selected].Due)
+	}
+	draft := parsedOptionalDate(m.input)
+	m.datePicker = datePickerState{
+		open: true, target: target, focused: pickerFocus(draft, pickerFocus(current, m.today)), current: copyDate(current), today: m.today,
+	}
 	return true
 }
 
@@ -178,6 +197,26 @@ func (m Model) confirmPickerDate(date *domain.Date) (tea.Model, tea.Cmd) {
 		m.form.text[field] = newTextField(value)
 		delete(m.form.errors, name)
 		picker.open = false
+	case dateInputStart, dateInputDue:
+		if date != nil && m.hasSelectedTask() {
+			other := parsedOptionalDate(m.tasks[m.selected].Start)
+			if picker.target == dateInputStart {
+				other = parsedOptionalDate(m.tasks[m.selected].Due)
+			}
+			if picker.target == dateInputStart && other != nil && other.Before(*date) {
+				picker.error = "El inicio no puede ser posterior al vencimiento guardado."
+				return m, nil
+			}
+			if picker.target == dateInputDue && other != nil && date.Before(*other) {
+				picker.error = "El vencimiento no puede ser anterior al inicio."
+				return m, nil
+			}
+		}
+		m.input = ""
+		if date != nil {
+			m.input = date.String()
+		}
+		picker.open = false
 	case dateFilterFrom:
 		picker.filterFrom = copyDate(date)
 		picker.target = dateFilterTo
@@ -206,7 +245,8 @@ var spanishMonths = [...]string{"", "enero", "febrero", "marzo", "abril", "mayo"
 
 func (p datePickerState) title() string {
 	field := map[datePickerTarget]string{
-		dateFormStart: "inicio", dateFormDue: "vencimiento", dateFilterFrom: "inicio del rango", dateFilterTo: "final del rango",
+		dateFormStart: "inicio", dateFormDue: "vencimiento", dateInputStart: "inicio", dateInputDue: "vencimiento",
+		dateFilterFrom: "inicio del rango", dateFilterTo: "final del rango",
 	}[p.target]
 	t := p.focused.Time()
 	return fmt.Sprintf("Calendario · %s · %s %d", field, spanishMonths[int(t.Month())], t.Year())

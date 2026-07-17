@@ -57,10 +57,10 @@ Los selectores usan `↑`/`↓`, `Enter` y `Esc`. Una lista vacía lo indica exp
 
 ## Selector de fechas
 
-- `Ctrl+O` abre el mismo calendario desde Inicio, Vencimiento o el filtro de rango. La entrada manual `AAAA-MM-DD` permanece disponible y `Esc` vuelve exactamente al borrador anterior.
+- `Ctrl+O` abre el mismo calendario desde Inicio y Vencimiento, tanto en el formulario completo como en la edición rápida, o desde el filtro de rango. La entrada manual `AAAA-MM-DD` permanece disponible y `Esc` vuelve exactamente al borrador anterior.
 - `←`/`→`/`↑`/`↓` cambia un día, `PgUp`/`PgDn` siete días, `[`/`]` un mes con el día ajustado al final del mes y `Home` enfoca hoy. La cabecera siempre nombra mes y año.
 - Cada celda combina símbolos textuales: `>` foco, `=` fecha guardada o filtro aplicado y `*` hoy. Los símbolos se acumulan cuando coinciden, de modo que la selección no depende del color.
-- `Enter` confirma el `Date` enfocado, `x` limpia el valor y `Esc` cancela. Un vencimiento anterior al inicio —en formulario o filtro— mantiene el calendario abierto y explica el conflicto sin mutar el borrador.
+- `Enter` confirma el `Date` enfocado, `x` limpia el valor y `Esc` cancela. Un vencimiento anterior al inicio —en formulario, edición rápida o filtro— mantiene el calendario abierto y explica el conflicto sin mutar el borrador.
 - El filtro selecciona primero el extremo inicial y después el final; solo actualiza su texto al completar ambos y no aplica el filtro hasta la confirmación normal del formulario.
 
 ### Paleta de comandos

@@ -1657,7 +1657,7 @@ func (m Model) activateInspectorRow() (tea.Model, tea.Cmd) {
 func (m Model) updateInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "ctrl+o":
-		if m.openFilterDatePicker() {
+		if m.openInputDatePicker() || m.openFilterDatePicker() {
 			return m, nil
 		}
 	case "esc":
@@ -1966,7 +1966,9 @@ func (m Model) footerContent() string {
 	}
 	if m.inputMode {
 		footer := fmt.Sprintf("FORMULARIO %s: %s█\nEnter guardar o aplicar · Esc cancelar · F1 ayuda general", m.inputLabel(), m.input)
-		if m.inputAction == "filter-dates" {
+		if m.inputAction == "start" || m.inputAction == "due" {
+			footer += " · Ctrl+O elegir fecha con calendario"
+		} else if m.inputAction == "filter-dates" {
 			footer += " · Ctrl+O elegir rango con calendario"
 		}
 		if feedback := m.feedbackLine(); feedback != "" {
