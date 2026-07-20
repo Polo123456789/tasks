@@ -9,25 +9,25 @@ import (
 )
 
 var (
-	Primary  = lipgloss.Color("#7D56F4")
-	Muted    = lipgloss.Color("#6C7086")
-	Danger   = lipgloss.Color("#F38BA8")
-	Warning  = lipgloss.Color("#F9E2AF")
-	Success  = lipgloss.Color("#A6E3A1")
+	Primary  = lipgloss.Color("#88B8F6")
+	Muted    = lipgloss.Color("#857B6F")
+	Danger   = lipgloss.Color("#E5786D")
+	Warning  = lipgloss.Color("#EADEAD")
+	Success  = lipgloss.Color("#95E454")
 	Title    = lipgloss.NewStyle().Bold(true).Foreground(Primary)
 	Border   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Muted).Padding(0, 1)
-	Selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11111B")).Background(Primary)
+	Selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#080808")).Background(lipgloss.Color("#CAE982"))
 	Help     = lipgloss.NewStyle().Foreground(Muted)
 )
 
 var statusPalette = [...]lipgloss.Color{
-	"#89B4FA", // blue
-	"#CBA6F7", // mauve
-	"#94E2D5", // teal
-	"#FAB387", // peach
-	"#F9E2AF", // yellow
-	"#74C7EC", // sapphire
-	"#B4BEFE", // lavender
+	"#88B8F6", // blue
+	"#D787FF", // purple
+	"#5FAFD7", // cyan
+	"#E5786D", // red
+	"#D4D987", // yellow
+	"#EADEAD", // cream
+	"#CAE982", // green
 }
 
 func StatusColor(kind domain.StatusKind, name string) lipgloss.Color {
